@@ -44,13 +44,11 @@ edge-device-project/
 1. **Install** Docker & Docker Compose on your edge device.  
 2. **Clone** this repo and `cd edge-device-project`.  
 3. **Build & Run** all services:
-   ```bash
-   docker-compose up --build```
+   `docker-compose up --build`
 4. **Verify:**
-    * Dashboard health: http://<device-ip>:8000/api/health
-    * MQTT broker on mqtt://<device-ip>:1883
-    * Kafka on localhost:9092, ZK on 2181
-    * PostgreSQL on 5432, InfluxDB on 8086
+    * Dashboard health: `http://<device-ip>:8000/api/health`
+    * MQTT broker on `mqtt://<device-ip>:1883`
+    * Kafka on `localhost:9092`, ZK on `2181`
+    * PostgreSQL on `5432`, InfluxDB on `8086`
 5. **Shut down:**
-```docker-compose down
-```
+    `docker-compose down`
