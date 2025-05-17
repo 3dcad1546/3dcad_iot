@@ -11,6 +11,8 @@ It implements:
 - **Kafka + Zookeeper**, **Mosquitto MQTT**, **PostgreSQL**, **InfluxDB**
 
 ### 📂 Structure
+
+```
 edge-device-project/
 │
 ├── docker-compose.yml
@@ -38,6 +40,7 @@ edge-device-project/
 ├── Dockerfile
 ├── requirements.txt
 └── main.py
+```
 
 ### 🚀 Getting Started
 
