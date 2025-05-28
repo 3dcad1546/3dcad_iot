@@ -1,4 +1,5 @@
 fastapi
 uvicorn[standard]
-psycopg2-binary
-influxdb-client
+pydantic
+requests
+aiokafka
