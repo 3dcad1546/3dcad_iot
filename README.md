@@ -55,3 +55,5 @@ edge-device-project/
     * PostgreSQL on `5432`, InfluxDB on `8086`
 5. **Shut down:**
     `docker-compose down`
+
+

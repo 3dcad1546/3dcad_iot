@@ -317,9 +317,7 @@ def oee_history(hours: int = 1):
     if not data:
         raise HTTPException(404, "No OEE history")
     return data
-# ─── OEE & Sensor APIs (as discussed) ──────────────────────────────
-# Refer to prior responses for /api/sensors/latest, /api/sensors/history,
-# /api/oee/current, /api/oee/history, /api/login, /api/logout, /api/scan
+
 
 # ─── WebSocket Setup ───────────────────────────────────────────────
 KAFKA_BOOTSTRAP = get_cfg("KAFKA_BROKER", "kafka:9092")

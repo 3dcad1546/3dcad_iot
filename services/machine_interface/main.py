@@ -169,7 +169,7 @@ async def read_loop():
     try:
         while True:
             now = time.strftime("%Y-%m-%dT%H:%M:%S")
-            
+
             # Read barcode flags
             flags = await client.read_holding_registers(BARCODE_FLAG_1, 2)
             flag1, flag2 = flags.registers
@@ -186,12 +186,43 @@ async def read_loop():
                 producer.send(KAFKA_TOPIC_BARCODE, {"barcode": barcode2, "camera": "2", "ts": now})
                 await client.write_register(BARCODE_FLAG_2, 0)
 
-            # Read 13 status bits from PLC register
-            status = await client.read_holding_registers(STATUS_REGISTER, 1)
-            bitfield = format(status.registers[0], "013b")[::-1]
-            status_dict = {STATUS_BITS[i]: int(bitfield[i]) for i in range(13)}
-            status_dict["ts"] = now
-            producer.send(KAFKA_TOPIC_STATUS, status_dict)
+            # Read both station status registers (for 13-bit states)
+            statuses = await client.read_holding_registers(STATUS_REGISTER, 2)
+            s1, s2 = statuses.registers
+
+            bitfield1 = format(s1, "013b")[::-1]
+            bitfield2 = format(s2, "013b")[::-1]
+
+            status_set_1 = {STATUS_BITS[i]: int(bitfield1[i]) for i in range(13)}
+            status_set_2 = {STATUS_BITS[i]: int(bitfield2[i]) for i in range(13)}
+
+            # Read corresponding barcodes
+            bc1 = await client.read_holding_registers(3100, 16)
+            bc2 = await client.read_holding_registers(3116, 16)
+            bc3 = await client.read_holding_registers(3132, 16)
+            bc4 = await client.read_holding_registers(3148, 16)
+
+            barcode1 = decode_string(bc1.registers)
+            barcode2 = decode_string(bc2.registers)
+            barcode3 = decode_string(bc3.registers)
+            barcode4 = decode_string(bc4.registers)
+
+            # Enrich status messages with barcode info
+            status_set_1.update({
+                "barcode1": barcode1,
+                "barcode2": barcode2,
+                "ts": now
+            })
+
+            status_set_2.update({
+                "barcode3": barcode3,
+                "barcode4": barcode4,
+                "ts": now
+            })
+
+            # Send both sets to Kafka
+            producer.send(KAFKA_TOPIC_STATUS, status_set_1)
+            producer.send(KAFKA_TOPIC_STATUS, status_set_2)
 
             await asyncio.sleep(2)
 
@@ -200,6 +231,7 @@ async def read_loop():
 
     finally:
         await client.close()
+
 
 # ─── Main ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
