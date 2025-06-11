@@ -330,7 +330,12 @@ WS_TOPICS = {
     "mes-logs": "mes_uploads",
     "trace-logs": "trace_logs",
     "scan-results": "scan_results",
-    "station-status": "station_flags"
+    "station-status": "station_flags",
+    "startup-status": "startup_status",
+    "manual-status": "manual_status",
+    "auto-status": "auto_status",
+    "robo-status": "robo_status",
+    "io-status": "io_status"
 }
 
 class ConnectionManager:
@@ -344,12 +349,15 @@ class ConnectionManager:
     def disconnect(self, name, ws: WebSocket):
         self.active[name].discard(ws)
 
-    async def broadcast(self, name, msg):
-        for ws in self.active[name]:
+    async def broadcast(self, topic, msg):
+        living = set()
+        for ws in self.active[topic]:
             try:
                 await ws.send_text(msg)
+                living.add(ws)
             except:
                 pass
+        self.active[topic] = living
 
 mgr = ConnectionManager()
 
@@ -369,18 +377,33 @@ async def kafka_to_ws(name, topic):
         await consumer.stop()
 
 @app.on_event("startup")
-async def startup():
+async def start_ws_consumers():
     for name, topic in WS_TOPICS.items():
         asyncio.create_task(kafka_to_ws(name, topic))
 
+async def kafka_to_ws(name, topic):
+    consumer = AIOKafkaConsumer(
+        topic,
+        bootstrap_servers=KAFKA_BOOTSTRAP,
+        auto_offset_reset="latest",
+        loop=asyncio.get_event_loop()
+    )
+    await consumer.start()
+    try:
+        async for msg in consumer:
+            await mgr.broadcast(name, msg.value.decode())
+    finally:
+        await consumer.stop()
+
 @app.websocket("/ws/{stream}")
-async def websocket_endpoint(stream: str, ws: WebSocket):
+async def ws_endpoint(stream: str, ws: WebSocket):
     if stream not in WS_TOPICS:
         await ws.close(code=1008)
         return
     await mgr.connect(stream, ws)
     try:
         while True:
-            await ws.receive_text()
+            await ws.receive_text()  # Ignore input; server-push only
     except WebSocketDisconnect:
         mgr.disconnect(stream, ws)
+

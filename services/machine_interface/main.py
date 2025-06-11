@@ -3,6 +3,7 @@ import json
 import time
 import asyncio
 from pymodbus.client import AsyncModbusTcpClient
+from pymodbus.client.sync import ModbusTcpClient
 from kafka import KafkaProducer
 
 # ─── Configuration ─────────────────────────────────────────────────────
@@ -26,6 +27,101 @@ STATUS_BITS = [
     "MES Upload", "Unload Station"
 ]
 
+TAG_MAP = {
+    "startup": {
+        "read": {
+            "INPUT_CONVEYOR_MODE_POS": 1000,
+            "CONTROLLER_STATUS": 1001,
+            "PROGRAM_STATUS": 1002,
+            "ACTUAL_POS": 1003,
+            "ACTUAL_SPEED": 1004,
+            "JOG_SPEED": 1005,
+        },
+        "write": {
+            "HOME": 2000,
+            "INITIALIZE": 2001,
+            "OP_ENABLE": 2002,
+            "START": 2003,
+            "STOP": 2004
+        }
+    },
+    "manual": {
+        "read": {
+            "INPUT_CONVEYOR_MODE_POS": 1100,
+            "CONTROLLER_STATUS": 1101,
+            "PROGRAM_STATUS": 1102,
+            "ACTUAL_POS": 1103,
+            "ACTUAL_SPEED": 1104,
+            "JOG_SPEED": 1105,
+        },
+        "write": {
+            "TARGET_POS": 2100,
+            "TARGET_SPEED": 2101,
+            "HOME": 2102,
+            "INITIALIZE": 2103,
+            "JOG_FORWARD": 2104,
+            "JOG_REVERSE": 2105,
+            "OP_ENABLE": 2106,
+            "START": 2107,
+            "STOP": 2108
+        }
+    },
+    "auto": {
+        "read": {
+            "OK": 3000,
+            "NOK": 3001,
+            "NR": 3002,
+            "SKIP": 3004,
+            "BARCODE_1": 3100,
+            "BARCODE_2": 3116,
+            "BARCODE_3": 3132,
+            "BARCODE_4": 3148,
+            "ALARM": 3200,
+            "RUNNING_MSG": 3201,
+            "PLC_KEEPALIVE_BIT": 3202,
+            "VISION_COMM_OK": 3203,
+            "SCARRA_ROBOT_COMM_OK": 3204,
+            "LCMR_COMM_OK": 3205,
+            "GANTRY_1": 3206,
+            "GANTRY_2": 3207
+        }
+    },
+    "io": {
+        "read": {
+            "DIGITAL_INPUT_1": 3300,
+            "DIGITAL_INPUT_2": 3301,
+            "DIGITAL_OUTPUT_1": 3302,
+            "DIGITAL_OUTPUT_2": 3303
+        }
+    },
+    "robo": {
+        "read": {
+            "ROBOT_MODE": 4000,
+            "CONTROLLER_STATUS": 4001,
+            "PROGRAM_STATUS": 4002
+        },
+        "write": {
+            "ABORT_PROGRAM": 4100,
+            "HOME_PROGRAM": 4101,
+            "MAIN_PROGRAM": 4102,
+            "INITIALIZE_PROGRAM": 4103,
+            "PAUSE_PROGRAM": 4104,
+            "ERROR_ACKNOWLEDGE": 4105,
+            "CONTINUE_PROGRAM": 4106,
+            "START_PROGRAM": 4107
+        }
+    }
+}
+
+ALARM_CODES = {
+    0: "No Alarm",
+    1: "Emergency Stop Triggered",
+    2: "Overheat Error",
+    3: "Limit Switch Fault",
+    4: "Power Loss Detected",
+    5: "Vision Mismatch"
+}
+
 # ─── Kafka Producer ────────────────────────────────────────────────────
 producer = KafkaProducer(
     bootstrap_servers=KAFKA_BROKER,
@@ -33,6 +129,33 @@ producer = KafkaProducer(
 )
 
 # ─── Helper Functions ──────────────────────────────────────────────────
+def get_client():
+    return ModbusTcpClient(PLC_HOST, port=PLC_PORT)
+
+def read_tags(section):
+    client = get_client()
+    client.connect()
+    out = {}
+    for name, addr in TAG_MAP[section].get("read", {}).items():
+        rr = client.read_holding_registers(addr, 1)
+        if rr.isError():
+            out[name] = None
+        else:
+            out[name] = rr.registers[0]
+    client.close()
+    return out
+
+def write_tags(section, tags: dict):
+    client = get_client()
+    client.connect()
+    for name, val in tags.items():
+        addr = TAG_MAP[section]["write"].get(name)
+        if addr is not None:
+            client.write_register(addr, int(val))
+    client.close()
+
+def get_alarm_message(code: int):
+    return ALARM_CODES.get(code, "Unknown Alarm")
 def decode_string(words):
     """Convert list of 16-bit words into ASCII string."""
     raw_bytes = b''.join([(w & 0xFF).to_bytes(1, 'little') + ((w >> 8) & 0xFF).to_bytes(1, 'little') for w in words])
