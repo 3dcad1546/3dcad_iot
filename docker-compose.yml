@@ -1,14 +1,118 @@
-version: '3.8'
+version: "3.8"
 
 services:
+
+  dashboard-api:
+    build:
+      context: ./dashboard_api
+    container_name: dashboard_api
+    ports:
+      - "8000:8000"
+    environment:
+      DB_URL: postgres://user:password@postgres:5432/edgedb
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: edgetoken
+      INFLUXDB_ORG: EdgeOrg
+      INFLUXDB_BUCKET: EdgeBucket
+      KAFKA_BROKER: kafka:9092
+    depends_on:
+      - postgres
+      - influxdb
+      - kafka
+
+  polling-service:
+    build:
+      context: ./polling_service
+    container_name: polling_service
+    environment:
+      LOCAL_SERVER_URLS: http://local-server/api/data
+      LOCAL_SERVER_AUTH_TOKEN: dummy_token
+      POLLING_INTERVAL: 30
+      KAFKA_BROKER: kafka:9092
+    depends_on:
+      - kafka
+
+  processing-service:
+    build:
+      context: ./processing_service
+    container_name: processing_service
+    environment:
+      TRACE_PROXY_HOST: trace-proxy
+      MES_UPLOAD_URL: http://mes-server/api/upload
+      KAFKA_BROKER: kafka:9092
+    depends_on:
+      - kafka
+
+  trigger-service:
+    build:
+      context: ./trigger_service
+    container_name: trigger_service
+    environment:
+      MQTT_BROKER: mqtt-broker
+      KAFKA_BROKER: kafka:9092
+    depends_on:
+      - kafka
+
+  machine-interface:
+    build:
+      context: ./machine_interface
+    container_name: machine_interface
+    environment:
+      PLC_IP: 192.168.10.2
+      PLC_PORT: 502
+      KAFKA_BROKER: kafka:9092
+    depends_on:
+      - kafka
+
+  websocket-bridge:
+    build:
+      context: ./websocket_bridge
+    container_name: websocket_bridge
+    ports:
+      - "8001:8000"
+    environment:
+      KAFKA_BROKER: kafka:9092
+    depends_on:
+      - kafka
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: edgedb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdata:/var/lib/influxdb2
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminpass
+      DOCKER_INFLUXDB_INIT_ORG: EdgeOrg
+      DOCKER_INFLUXDB_INIT_BUCKET: EdgeBucket
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: edgetoken
+
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
+    image: confluentinc/cp-zookeeper:7.5.1
+    container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    image: confluentinc/cp-kafka:7.5.1
+    container_name: kafka
     depends_on:
       - zookeeper
     ports:
@@ -18,93 +122,6 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-
-  mqtt-broker:
-    image: eclipse-mosquitto:2
-    ports:
-      - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
-
-  postgres:
-    image: postgres:14
-    restart: always
-    environment:
-      POSTGRES_USER: edgeuser
-      POSTGRES_PASSWORD: edgepass
-      POSTGRES_DB: edgedb
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-  influxdb:
-    image: influxdb:2.7
-    ports:
-      - "8086:8086"
-    volumes:
-      - influxdata:/var/lib/influxdb2
-    environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: edge
-      DOCKER_INFLUXDB_INIT_PASSWORD: edgepass
-      DOCKER_INFLUXDB_INIT_ORG: EdgeOrg
-      DOCKER_INFLUXDB_INIT_BUCKET: EdgeBucket
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: edgetoken
-
-  dashboard-api:
-    build:
-      context: ./services/dashboard_api
-    ports:
-      - "8000:8000"
-    depends_on:
-      - postgres
-      - influxdb
-    environment:
-      DB_URL: postgresql://edgeuser:edgepass@postgres:5432/edgedb
-      INFLUXDB_URL: http://influxdb:8086
-      INFLUXDB_TOKEN: edgetoken
-      INFLUXDB_ORG: EdgeOrg
-      INFLUXDB_BUCKET: EdgeBucket
-
-  polling-service:
-    build:
-      context: ./services/polling_service
-    depends_on:
-      - kafka
-    environment:
-      KAFKA_BROKER: kafka:9092
-      POLLING_INTERVAL: 30
-
-  trigger-service:
-    build:
-      context: ./services/trigger_service
-    depends_on:
-      - mqtt-broker
-      - kafka
-    environment:
-      MQTT_BROKER_HOST: mqtt-broker
-      KAFKA_BROKER: kafka:9092
-
-  processing-service:
-    build:
-      context: ./services/processing_service
-    depends_on:
-      - kafka
-      - postgres
-      - influxdb
-    environment:
-      KAFKA_BROKER: kafka:9092
-      DB_URL: postgresql://edgeuser:edgepass@postgres:5432/edgedb
-
-  machine-interface:
-    build:
-      context: ./services/machine_interface
-    depends_on:
-      - kafka
-    environment:
-      KAFKA_BROKER: kafka:9092
 
 volumes:
   pgdata:

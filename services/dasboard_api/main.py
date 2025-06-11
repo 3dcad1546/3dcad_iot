@@ -16,21 +16,20 @@ from aiokafka import AIOKafkaConsumer
 
 app = FastAPI()
 
-# ─── PostgreSQL Setup ───────────────────────────────────────────────────────
+# ─── PostgreSQL Setup ──────────────────────────────────────────────
 DB_URL = os.getenv("DB_URL")
 conn = psycopg2.connect(DB_URL)
 conn.autocommit = True
 cur = conn.cursor()
 
-# ─── Hot-Reloadable Config Cache ────────────────────────────────────────────
-_config_cache: dict[str,str] = {}
+# ─── Hot Reloadable Config ─────────────────────────────────────────
+_config_cache: dict[str, str] = {}
 
-def load_config() -> dict[str,str]:
+def load_config():
     cur.execute("SELECT key, value FROM config")
     return {k: v for k, v in cur.fetchall()}
 
 def listen_for_config_updates():
-    """Listen on the 'config_update' channel and reload individual keys."""
     listen_conn = psycopg2.connect(DB_URL)
     listen_conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
     lc = listen_conn.cursor()
@@ -42,20 +41,18 @@ def listen_for_config_updates():
         while listen_conn.notifies:
             note = listen_conn.notifies.pop(0)
             key = note.payload
-            # reload just this key
             cur.execute("SELECT value FROM config WHERE key = %s", (key,))
             row = cur.fetchone()
             if row:
                 _config_cache[key] = row[0]
 
-# initial load + listener thread
 _config_cache = load_config()
 threading.Thread(target=listen_for_config_updates, daemon=True).start()
 
 def get_cfg(key: str, default=None):
     return _config_cache.get(key, default)
 
-# ─── InfluxDB Setup ─────────────────────────────────────────────────────────
+# ─── InfluxDB Setup ────────────────────────────────────────────────
 influx_client = InfluxDBClient(
     url=get_cfg("INFLUXDB_URL", "http://influxdb:8086"),
     token=get_cfg("INFLUXDB_TOKEN", "edgetoken"),
@@ -64,7 +61,7 @@ influx_client = InfluxDBClient(
 write_api = influx_client.write_api(write_options=WritePrecision.S)
 query_api = influx_client.query_api()
 
-# ─── Models & Auth Guard ────────────────────────────────────────────────────
+# ─── Models & Auth Guard ───────────────────────────────────────────
 class LoginRequest(BaseModel):
     Username: str
     Password: str
@@ -79,27 +76,15 @@ def require_login():
     if not _current_operator:
         raise HTTPException(401, "Operator not logged in")
 
-# ─── Startup Validation ─────────────────────────────────────────────────────
-@app.on_event("startup")
-def validate_machine_id():
-    allowed = get_cfg("MACHINE_IDS", "").split(",")
-    machine = get_cfg("MACHINE_ID")
-    if machine not in allowed:
-        raise RuntimeError(f"MACHINE_ID '{machine}' not in allowed list {allowed}")
-
-# ─── Config Update Endpoint ─────────────────────────────────────────────────
-class ConfigItem(BaseModel):
-    key: str
-    value: str
-
+# ─── Config API ─────────────────────────────────────────────────────
 @app.post("/api/config")
-def update_config(item: ConfigItem, _=Depends(require_login)):
-    cur.execute("UPDATE config SET value = %s WHERE key = %s", (item.value, item.key))
-    cur.execute("NOTIFY config_update, %s", (item.key,))
-    return {"message": f"Config '{item.key}' updated"}
+def update_config(item: dict, _=Depends(require_login)):
+    cur.execute("UPDATE config SET value = %s WHERE key = %s", (item["value"], item["key"]))
+    cur.execute("NOTIFY config_update, %s", (item["key"],))
+    return {"message": f"Config {item['key']} updated"}
 
 @app.get("/api/config")
-def read_config():
+def get_config():
     return _config_cache
 
 # ─── Login & Logout ─────────────────────────────────────────────────────────
@@ -133,6 +118,11 @@ def logout():
     global _current_operator
     _current_operator = None
     return {"message": "Logged out"}
+
+# ─── Health ─────────────────────────────────────────────────────────
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
 
 # ─── Scan Orchestration ─────────────────────────────────────────────────────
 @app.post("/api/scan")
@@ -261,11 +251,6 @@ def scan_part(req: ScanRequest, _=Depends(require_login)):
         )
         raise HTTPException(500, "Internal server error")
 
-# ─── Health ────────────────────────────────────────────────────────────────
-@app.get("/api/health")
-def health():
-    return {"status": "ok"}
-
 # ─── Sensors Endpoints ─────────────────────────────────────────────────────
 @app.get("/api/sensors/latest")
 def sensors_latest(source: str):
@@ -332,58 +317,67 @@ def oee_history(hours: int = 1):
     if not data:
         raise HTTPException(404, "No OEE history")
     return data
+# ─── OEE & Sensor APIs (as discussed) ──────────────────────────────
+# Refer to prior responses for /api/sensors/latest, /api/sensors/history,
+# /api/oee/current, /api/oee/history, /api/login, /api/logout, /api/scan
 
-# ─── WebSocket Setup ───────────────────────────────────────────────────────
+# ─── WebSocket Setup ───────────────────────────────────────────────
 KAFKA_BOOTSTRAP = get_cfg("KAFKA_BROKER", "kafka:9092")
 WS_TOPICS = {
-    "sensors":   "raw_server_data",
-    "triggers":  "trigger_events",
-    "commands":  "machine_commands",
-    "mes-logs":  "mes_uploads",
-    "trace-logs":"trace_logs",
-    "scan-results":"scan_results"
+    "sensors": "raw_server_data",
+    "triggers": "trigger_events",
+    "commands": "machine_commands",
+    "mes-logs": "mes_uploads",
+    "trace-logs": "trace_logs",
+    "scan-results": "scan_results",
+    "station-status": "station_flags"
 }
 
 class ConnectionManager:
     def __init__(self):
-        self.active = {k:set() for k in WS_TOPICS}
-    async def connect(self,name,ws:WebSocket):
-        await ws.accept(); self.active[name].add(ws)
-    def disconnect(self,name,ws:WebSocket):
+        self.active = {k: set() for k in WS_TOPICS}
+
+    async def connect(self, name, ws: WebSocket):
+        await ws.accept()
+        self.active[name].add(ws)
+
+    def disconnect(self, name, ws: WebSocket):
         self.active[name].discard(ws)
-    async def broadcast(self,name,msg):
-        living=set()
+
+    async def broadcast(self, name, msg):
         for ws in self.active[name]:
-            try: await ws.send_text(msg); living.add(ws)
-            except: pass
-        self.active[name]=living
+            try:
+                await ws.send_text(msg)
+            except:
+                pass
 
 mgr = ConnectionManager()
 
-async def kafka_to_ws(name,topic):
+async def kafka_to_ws(name, topic):
     consumer = AIOKafkaConsumer(
-        topic, bootstrap_servers=KAFKA_BOOTSTRAP,
+        topic,
+        bootstrap_servers=KAFKA_BOOTSTRAP,
         auto_offset_reset="latest",
         loop=asyncio.get_event_loop()
     )
     await consumer.start()
     try:
         async for record in consumer:
-            msg = record.value.decode() if isinstance(record.value,bytes) else str(record.value)
-            await mgr.broadcast(name,msg)
+            msg = record.value.decode() if isinstance(record.value, bytes) else str(record.value)
+            await mgr.broadcast(name, msg)
     finally:
         await consumer.stop()
 
 @app.on_event("startup")
-async def startup_consumers():
-    for name,topic in WS_TOPICS.items():
-        if topic:
-            asyncio.create_task(kafka_to_ws(name,topic))
+async def startup():
+    for name, topic in WS_TOPICS.items():
+        asyncio.create_task(kafka_to_ws(name, topic))
 
 @app.websocket("/ws/{stream}")
-async def websocket_endpoint(stream:str, ws:WebSocket):
+async def websocket_endpoint(stream: str, ws: WebSocket):
     if stream not in WS_TOPICS:
-        await ws.close(code=1008); return
+        await ws.close(code=1008)
+        return
     await mgr.connect(stream, ws)
     try:
         while True:

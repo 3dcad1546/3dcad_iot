@@ -1,26 +1,46 @@
-import time
 import os
+import time
 import requests
-from kafka import KafkaProducer
 import json
+from kafka import KafkaProducer
 
-KAFKA_TOPIC = "raw_server_data"
+# ─── Configuration from Environment ─────────────────────────────
+LOCAL_SERVER_URLS = os.getenv("LOCAL_SERVER_URLS", "").split(",")
+AUTH_TOKEN = os.getenv("LOCAL_SERVER_AUTH_TOKEN", "")
+POLLING_INTERVAL = int(os.getenv("POLLING_INTERVAL", "30"))
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
-POLLING_INTERVAL = int(os.getenv("POLLING_INTERVAL", "10"))
+RAW_TOPIC = os.getenv("RAW_KAFKA_TOPIC", "raw_server_data")
+LOG_TRIGGER_URL = os.getenv("TRACE_LOG_TRIGGER", "http://traceproxy:8765/v2/logs")
 
+HEADERS = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
+
+# ─── Kafka Setup ────────────────────────────────────────────────
 producer = KafkaProducer(
     bootstrap_servers=KAFKA_BROKER,
     value_serializer=lambda v: json.dumps(v).encode("utf-8")
 )
 
-while True:
+def poll_and_push():
+    for url in LOCAL_SERVER_URLS:
+        try:
+            response = requests.get(url.strip(), headers=HEADERS, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            print(f"[INFO] Data from {url}: {data}")
+            producer.send(RAW_TOPIC, data)
+        except Exception as e:
+            print(f"[ERROR] Failed to poll {url}: {e}")
+
+def trigger_log_upload():
     try:
-        # Replace with real API call:
-        # resp = requests.get("http://server/api/data")
-        # data = resp.json()
-        data = {"timestamp": time.time(), "source": "server1", "value": 42}
-        producer.send(KAFKA_TOPIC, data)
-        print(f"Published data: {data}")
+        response = requests.post(LOG_TRIGGER_URL, timeout=3)
+        print(f"[TRACE UPLOAD] Triggered: {response.status_code}")
     except Exception as e:
-        print(f"Polling error: {e}")
-    time.sleep(POLLING_INTERVAL)
+        print(f"[TRACE UPLOAD ERROR] {e}")
+
+if __name__ == "__main__":
+    print("[Polling Service] Started")
+    while True:
+        poll_and_push()
+        trigger_log_upload()
+        time.sleep(POLLING_INTERVAL)
