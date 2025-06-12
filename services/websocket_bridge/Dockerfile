@@ -15,4 +15,4 @@ COPY bridge.py .
 ENV KAFKA_BROKER=kafka:9092
 
 # Run the service using uvicorn
-CMD ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
