@@ -64,16 +64,7 @@ services:
     depends_on:
       - kafka
 
-  websocket-bridge:
-    build:
-      context: ./services/websocket_bridge
-    container_name: websocket_bridge
-    ports:
-      - "8001:8000"
-    environment:
-      KAFKA_BROKER: kafka:9092
-    depends_on:
-      - kafka
+  
 
   postgres:
     image: postgres:15
@@ -87,6 +78,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   influxdb:
     image: influxdb:2.7
@@ -122,6 +118,11 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   pgdata:

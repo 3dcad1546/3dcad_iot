@@ -5,6 +5,11 @@ import asyncio
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.client.sync import ModbusTcpClient
 from kafka import KafkaProducer
+from kafka.errors import NoBrokersAvailable
+
+# ─── kafka init─────────────────────────────────────────────────────
+
+
 
 # ─── Configuration ─────────────────────────────────────────────────────
 PLC_HOST = os.getenv("MODBUS_HOST", "localhost")
@@ -123,10 +128,24 @@ ALARM_CODES = {
 }
 
 # ─── Kafka Producer ────────────────────────────────────────────────────
-producer = KafkaProducer(
-    bootstrap_servers=KAFKA_BROKER,
-    value_serializer=lambda v: json.dumps(v).encode("utf-8")
-)
+def get_producer():
+    for attempt in range(10):
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers=KAFKA_BROKER,
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                retries=5,
+                linger_ms=10,
+                request_timeout_ms=10000,
+                max_block_ms=10000
+            )
+            return producer
+        except KafkaError as e:
+            print(f"[KafkaProducer] Connection failed (attempt {attempt+1}/10): {e}")
+            time.sleep(5)
+    raise RuntimeError("KafkaProducer: Failed to connect after retries")
+
+producer = get_producer()
 
 # ─── Helper Functions ──────────────────────────────────────────────────
 def get_client():

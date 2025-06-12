@@ -3,6 +3,7 @@ import json
 import requests
 import time
 from kafka import KafkaConsumer, KafkaProducer
+from kafka.errors import KafkaError
 import psycopg2
 
 # ─── Configuration ─────────────────────────────────────────────
@@ -18,19 +19,45 @@ FAILURE_REASONS = os.getenv("FAILURE_REASON_CODES", "REJECT").split(",")
 NCM_REASON_CODES = os.getenv("NCM_REASON_CODES", "DEFECT").split(",")
 
 # ─── Kafka Setup ───────────────────────────────────────────────
-consumer = KafkaConsumer(
-    RAW_TOPIC,
-    bootstrap_servers=KAFKA_BROKER,
-    value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-    auto_offset_reset='latest',
-    enable_auto_commit=True,
-    group_id="processor-service"
-)
+def get_consumer():
+    for attempt in range(10):
+        try:
+            consumer = KafkaConsumer(
+                RAW_TOPIC,
+                bootstrap_servers=KAFKA_BROKER,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                auto_offset_reset='latest',
+                enable_auto_commit=True,
+                group_id="processor-service",
+                consumer_timeout_ms=10000,  # Stop polling after 10s of inactivity
+                max_poll_records=10
+            )
+            return consumer
+        except Exception as e:
+            logging.error(f"[KafkaConsumer] Connection failed (attempt {attempt+1}/10): {e}")
+            time.sleep(5)
+    raise RuntimeError("KafkaConsumer: Failed to connect after retries")
 
-producer = KafkaProducer(
-    bootstrap_servers=KAFKA_BROKER,
-    value_serializer=lambda v: json.dumps(v).encode("utf-8")
-)
+consumer = get_consumer()
+
+def get_producer():
+    for attempt in range(10):
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers=KAFKA_BROKER,
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                retries=5,
+                linger_ms=10,
+                request_timeout_ms=10000,
+                max_block_ms=10000
+            )
+            return producer
+        except KafkaError as e:
+            print(f"[KafkaProducer] Connection failed (attempt {attempt+1}/10): {e}")
+            time.sleep(5)
+    raise RuntimeError("KafkaProducer: Failed to connect after retries")
+
+producer = get_producer()
 
 # ─── PostgreSQL Setup ──────────────────────────────────────────
 conn = psycopg2.connect(os.getenv("DB_URL"))

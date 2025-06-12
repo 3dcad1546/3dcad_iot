@@ -13,14 +13,48 @@ from pydantic import BaseModel
 from typing import Optional
 from influxdb_client import InfluxDBClient, WritePrecision
 from aiokafka import AIOKafkaConsumer
+from aiokafka.errors import KafkaConnectionError
+
+# ─── kafka init ──────────────────────────────────────────────
+async def kafka_to_ws(name, topic):
+    for attempt in range(10):  # Try for up to ~50 seconds
+        try:
+            consumer = AIOKafkaConsumer(
+                topic,
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                auto_offset_reset="latest"
+            )
+            await consumer.start()
+            break
+        except KafkaConnectionError:
+            print(f"[{name}] Kafka not ready. Retrying ({attempt + 1}/10)...")
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError(f"Kafka not available for topic {topic}")
+
+    try:
+        async for msg in consumer:
+            await mgr.broadcast(name, msg.value.decode())
+    finally:
+        await consumer.stop()
 
 app = FastAPI()
 
 # ─── PostgreSQL Setup ──────────────────────────────────────────────
 DB_URL = os.getenv("DB_URL")
-conn = psycopg2.connect(DB_URL)
+for _ in range(10):
+    try:
+        conn = psycopg2.connect(DB_URL)
+        break
+    except psycopg2.OperationalError:
+        print("PostgreSQL not ready, retrying...")
+        time.sleep(5)
+else:
+    raise RuntimeError("PostgreSQL not available")
 conn.autocommit = True
 cur = conn.cursor()
+
+
 
 # ─── Hot Reloadable Config ─────────────────────────────────────────
 _config_cache: dict[str, str] = {}
@@ -380,13 +414,21 @@ async def start_ws_consumers():
         asyncio.create_task(kafka_to_ws(name, topic))
 
 async def kafka_to_ws(name, topic):
-    consumer = AIOKafkaConsumer(
-        topic,
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        auto_offset_reset="latest",
-        loop=asyncio.get_event_loop()
-    )
-    await consumer.start()
+    for attempt in range(10):  # Try for up to ~50 seconds
+        try:
+            consumer = AIOKafkaConsumer(
+                topic,
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                auto_offset_reset="latest"
+            )
+            await consumer.start()
+            break
+        except KafkaConnectionError:
+            print(f"[{name}] Kafka not ready. Retrying ({attempt + 1}/10)...")
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError(f"Kafka not available for topic {topic}")
+
     try:
         async for msg in consumer:
             await mgr.broadcast(name, msg.value.decode())
