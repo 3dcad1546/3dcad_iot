@@ -4,7 +4,7 @@ services:
 
   dashboard-api:
     build:
-      context: ./dashboard_api
+      context: ./services/dashboard_api
     container_name: dashboard_api
     ports:
       - "8000:8000"
@@ -22,7 +22,7 @@ services:
 
   polling-service:
     build:
-      context: ./polling_service
+      context: ./services/polling_service
     container_name: polling_service
     environment:
       LOCAL_SERVER_URLS: http://local-server/api/data
@@ -34,7 +34,7 @@ services:
 
   processing-service:
     build:
-      context: ./processing_service
+      context: ./services/processing_service
     container_name: processing_service
     environment:
       TRACE_PROXY_HOST: trace-proxy
@@ -45,7 +45,7 @@ services:
 
   trigger-service:
     build:
-      context: ./trigger_service
+      context: ./services/trigger_service
     container_name: trigger_service
     environment:
       MQTT_BROKER: mqtt-broker
@@ -55,7 +55,7 @@ services:
 
   machine-interface:
     build:
-      context: ./machine_interface
+      context: ./services/machine_interface
     container_name: machine_interface
     environment:
       PLC_IP: 192.168.10.2
@@ -66,7 +66,7 @@ services:
 
   websocket-bridge:
     build:
-      context: ./websocket_bridge
+      context: ./services/websocket_bridge
     container_name: websocket_bridge
     ports:
       - "8001:8000"
