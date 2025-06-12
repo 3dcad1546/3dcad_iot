@@ -3,7 +3,7 @@ import json
 import time
 import asyncio
 from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.client.sync import ModbusTcpClient
+from pymodbus.client import ModbusTcpClient
 from kafka import KafkaProducer
 from kafka.errors import NoBrokersAvailable
 
@@ -181,8 +181,12 @@ def decode_string(words):
     return raw_bytes.decode("ascii", errors="ignore").rstrip("\x00")
 
 async def read_loop():
-    client = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
+    client = AsyncModbusTcpClient(host=os.getenv("PLC_IP"), port=int(os.getenv("PLC_PORT")))
+
     await client.connect()
+    if not client.connected:
+        raise ConnectionError("Failed to connect to PLC")
+
     print(f"Connected to PLC at {PLC_HOST}:{PLC_PORT}")
 
     try:
@@ -190,7 +194,7 @@ async def read_loop():
             now = time.strftime("%Y-%m-%dT%H:%M:%S")
 
             # Read barcode flags
-            flags = await client.read_holding_registers(BARCODE_FLAG_1, 2)
+            flags = await client.read_holding_registers(address=BARCODE_FLAG_1, count=2)
             flag1, flag2 = flags.registers
 
             if flag1 == 1:
@@ -206,7 +210,7 @@ async def read_loop():
                 await client.write_register(BARCODE_FLAG_2, 0)
 
             # Read both station status registers (for 13-bit states)
-            statuses = await client.read_holding_registers(STATUS_REGISTER, 2)
+            statuses = await client.read_holding_registers(address = STATUS_REGISTER,count= 2)
             s1, s2 = statuses.registers
 
             bitfield1 = format(s1, "013b")[::-1]
@@ -249,7 +253,8 @@ async def read_loop():
         print("Error in machine interface loop:", e)
 
     finally:
-        await client.close()
+        if client and hasattr(client, "close"):
+            await client.close()
 
 
 # ─── Main ──────────────────────────────────────────────────────────────

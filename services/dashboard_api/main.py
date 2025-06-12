@@ -11,7 +11,7 @@ import psycopg2.extensions
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from typing import Optional
-from influxdb_client import InfluxDBClient, WritePrecision
+from influxdb_client import InfluxDBClient, WritePrecision, WriteOptions
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaConnectionError
 
@@ -92,7 +92,8 @@ influx_client = InfluxDBClient(
     token=get_cfg("INFLUXDB_TOKEN", "edgetoken"),
     org=get_cfg("INFLUXDB_ORG", "EdgeOrg")
 )
-write_api = influx_client.write_api(write_options=WritePrecision.S)
+write_api = influx_client.write_api(write_options=WriteOptions(batch_size=1, flush_interval=1000))
+
 query_api = influx_client.query_api()
 
 # ─── Models & Auth Guard ───────────────────────────────────────────

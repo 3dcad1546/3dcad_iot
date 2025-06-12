@@ -14,7 +14,16 @@ TRIGGER_KAFKA_TOPIC = os.getenv("TRIGGER_KAFKA_TOPIC", "trigger_events")
 DB_URL = os.getenv("DB_URL")
 
 # ─── PostgreSQL Setup ──────────────────────────────────────────────────
-conn = psycopg2.connect(DB_URL)
+DB_URL = os.getenv("DB_URL")
+for _ in range(10):
+    try:
+        conn = psycopg2.connect(DB_URL)
+        break
+    except psycopg2.OperationalError:
+        print("PostgreSQL not ready, retrying...")
+        time.sleep(5)
+else:
+    raise RuntimeError("PostgreSQL not available")
 conn.autocommit = True
 cur = conn.cursor()
 
