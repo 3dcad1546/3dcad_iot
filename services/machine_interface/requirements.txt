@@ -1,2 +1,2 @@
-pymodbus
+pymodbus==2.5.3
 kafka-python
