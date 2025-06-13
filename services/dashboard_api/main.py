@@ -394,20 +394,7 @@ class ConnectionManager:
 
 mgr = ConnectionManager()
 
-async def kafka_to_ws(name, topic):
-    consumer = AIOKafkaConsumer(
-        topic,
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        auto_offset_reset="latest",
-        loop=asyncio.get_event_loop()
-    )
-    await consumer.start()
-    try:
-        async for record in consumer:
-            msg = record.value.decode() if isinstance(record.value, bytes) else str(record.value)
-            await mgr.broadcast(name, msg)
-    finally:
-        await consumer.stop()
+
 
 @app.on_event("startup")
 async def start_ws_consumers():
