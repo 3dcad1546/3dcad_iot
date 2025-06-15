@@ -2,19 +2,22 @@ import os
 import json
 import time
 import asyncio
-from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.client import ModbusTcpClient
-from kafka import KafkaProducer
-from kafka.errors import NoBrokersAvailable
-
+from pymodbus.client.tcp import AsyncModbusTcpClient
+#from pymodbus.client.tcp import ModbusTcpClient
+from pymodbus.exceptions import ModbusException
+from kafka import KafkaProducer, KafkaAdminClient
+from kafka.errors import NoBrokersAvailable, KafkaError
 # ─── kafka init─────────────────────────────────────────────────────
 
 
 
 # ─── Configuration ─────────────────────────────────────────────────────
-PLC_HOST = os.getenv("MODBUS_HOST", "localhost")
-PLC_PORT = int(os.getenv("MODBUS_PORT", "502"))
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
+PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
+PLC_PORT = int(os.getenv("PLC_PORT", "502"))
+# PLC_IP = os.getenv("PLC_IP", "192.168.1.100")  # Default to your PLC IP
+# PLC_PORT = int(os.getenv("PLC_PORT", "502"))
+
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
 KAFKA_TOPIC_BARCODE = os.getenv("BARCODE_TOPIC", "trigger_events")
 KAFKA_TOPIC_STATUS = os.getenv("MACHINE_STATUS_TOPIC", "machine_status")
 
@@ -93,10 +96,10 @@ TAG_MAP = {
     },
     "io": {
         "read": {
-            "DIGITAL_INPUT_1": 3300,
-            "DIGITAL_INPUT_2": 3301,
-            "DIGITAL_OUTPUT_1": 3302,
-            "DIGITAL_OUTPUT_2": 3303
+            "DIGITAL_INPUT_1": 1000,
+            "DIGITAL_INPUT_2": 1001,
+            "DIGITAL_OUTPUT_1": 1002,
+            "DIGITAL_OUTPUT_2": 1003
         }
     },
     "robo": {
@@ -129,21 +132,39 @@ ALARM_CODES = {
 
 # ─── Kafka Producer ────────────────────────────────────────────────────
 def get_producer():
+    """Create and return a Kafka producer with connection testing"""
+    kafka_broker = os.getenv("KAFKA_BROKER", "kafka:9092")
+    print(f"Connecting to Kafka broker at {kafka_broker}...")
+    
     for attempt in range(10):
         try:
+            # First test connection with AdminClient
+            admin = KafkaAdminClient(
+                bootstrap_servers=kafka_broker,
+                request_timeout_ms=10000
+            )
+            admin.list_topics()  # Test connection
+            admin.close()
+            
+            # Then create producer
             producer = KafkaProducer(
-                bootstrap_servers=KAFKA_BROKER,
+                bootstrap_servers=kafka_broker,
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                 retries=5,
-                linger_ms=10,
                 request_timeout_ms=10000,
-                max_block_ms=10000
+                api_version=(2, 8, 1)
             )
+            print("Kafka connection established")
             return producer
-        except KafkaError as e:
-            print(f"[KafkaProducer] Connection failed (attempt {attempt+1}/10): {e}")
-            time.sleep(5)
-    raise RuntimeError("KafkaProducer: Failed to connect after retries")
+            
+        except (NoBrokersAvailable, KafkaError) as e:
+            print(f"Kafka connection failed (attempt {attempt+1}/10): {str(e)}")
+            time.sleep(min(2 ** attempt, 10))  # Exponential backoff with max 10s
+        finally:
+            if 'admin' in locals():
+                admin.close()
+    
+    raise RuntimeError("Failed to connect to Kafka after 10 attempts")
 
 producer = get_producer()
 
@@ -181,24 +202,27 @@ def decode_string(words):
     return raw_bytes.decode("ascii", errors="ignore").rstrip("\x00")
 
 async def read_loop():
-    client = AsyncModbusTcpClient(host=os.getenv("PLC_IP"), port=int(os.getenv("PLC_PORT")))
-
+    #client = AsyncModbusTcpClient(host=os.getenv("PLC_IP"), port=int(os.getenv("PLC_PORT")))
+    client = AsyncModbusTcpClient(host='192.168.10.3', port=502)
+     # Establish connection
     await client.connect()
     if not client.connected:
-        raise ConnectionError("Failed to connect to PLC")
+        print("❌ Could not connect to PLC.")
+        return
 
-    print(f"Connected to PLC at {PLC_HOST}:{PLC_PORT}")
+    print(f"✅ Connected to PLC at {PLC_HOST}:{PLC_PORT}")
+    
 
     try:
         while True:
             now = time.strftime("%Y-%m-%dT%H:%M:%S")
 
             # Read barcode flags
-            flags = await client.read_holding_registers(address=BARCODE_FLAG_1, count=2)
+            flags = await client.read_holding_registers(address=BARCODE_FLAG_1,count=2)
             flag1, flag2 = flags.registers
 
             if flag1 == 1:
-                words = await client.read_holding_registers(*BARCODE_1_BLOCK)
+                words = await client.read_holding_registers(*BARCODE_2_BLOCK)
                 barcode1 = decode_string(words.registers)
                 producer.send(KAFKA_TOPIC_BARCODE, {"barcode": barcode1, "camera": "1", "ts": now})
                 await client.write_register(BARCODE_FLAG_1, 0)
@@ -220,10 +244,10 @@ async def read_loop():
             status_set_2 = {STATUS_BITS[i]: int(bitfield2[i]) for i in range(13)}
 
             # Read corresponding barcodes
-            bc1 = await client.read_holding_registers(3100, 16)
-            bc2 = await client.read_holding_registers(3116, 16)
-            bc3 = await client.read_holding_registers(3132, 16)
-            bc4 = await client.read_holding_registers(3148, 16)
+            bc1 = await client.read_holding_registers(address= 3100, count=16)
+            bc2 = await client.read_holding_registers(address= 3116, count=16)
+            bc3 = await client.read_holding_registers(address= 3132, count=16)
+            bc4 = await client.read_holding_registers(address= 3148, count=16)
 
             barcode1 = decode_string(bc1.registers)
             barcode2 = decode_string(bc2.registers)
@@ -248,13 +272,15 @@ async def read_loop():
             producer.send(KAFKA_TOPIC_STATUS, status_set_2)
 
             await asyncio.sleep(2)
-
+    except ModbusException as e:
+        print("❌ Modbus Exception:", e)
+        
     except Exception as e:
         print("Error in machine interface loop:", e)
 
     finally:
         if client and hasattr(client, "close"):
-            await client.close()
+            client.close()
 
 
 # ─── Main ──────────────────────────────────────────────────────────────

@@ -2,6 +2,31 @@ version: "3.8"
 
 services:
 
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.1
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+  kafka:
+    image: confluentinc/cp-kafka:7.5.1
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
   dashboard-api:
     build:
       context: ./services/dashboard_api
@@ -22,6 +47,8 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
+      machine-interface:
+        condition: service_started
 
   polling-service:
     build:
@@ -41,6 +68,10 @@ services:
       context: ./services/processing_service
     container_name: processing_service
     environment:
+      KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 1
       TRACE_PROXY_HOST: trace-proxy
       MES_UPLOAD_URL: http://mes-server/api/upload
       KAFKA_BROKER: kafka:9092
@@ -64,11 +95,12 @@ services:
       postgres:
         condition: service_healthy
   machine-interface:
-    build:
+    build: 
       context: ./services/machine_interface
+    # network_mode: "host"  # Shares host's network stack
     container_name: machine_interface
     environment:
-      PLC_IP: 192.168.10.2
+      PLC_IP: 192.168.10.3  # Actual PLC I
       PLC_PORT: 502
       KAFKA_BROKER: kafka:9092
     depends_on:
@@ -109,32 +141,6 @@ services:
       DOCKER_INFLUXDB_INIT_BUCKET: EdgeBucket
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: edgetoken
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.1
-    container_name: zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-
-  kafka:
-    image: confluentinc/cp-kafka:7.5.1
-    container_name: kafka
-    depends_on:
-      zookeeper:
-        condition: service_started
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
 volumes:
   pgdata:

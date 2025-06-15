@@ -357,13 +357,14 @@ def oee_history(hours: int = 1):
 # ─── WebSocket Setup ───────────────────────────────────────────────
 KAFKA_BOOTSTRAP = get_cfg("KAFKA_BROKER", "kafka:9092")
 WS_TOPICS = {
-    "sensors": "raw_server_data",
-    "triggers": "trigger_events",
-    "commands": "machine_commands",
-    "mes-logs": "mes_uploads",
-    "trace-logs": "trace_logs",
-    "scan-results": "scan_results",
-    "station-status": "station_flags",
+    # "sensors": "raw_server_data",
+    # "triggers": "trigger_events",
+    # "commands": "machine_commands",
+    # "mes-logs": "mes_uploads",
+    # "trace-logs": "trace_logs",
+    #"scan-results": "scan_results",
+    "machine-status":"machine_status",
+    #"station-status": "station_flags",
     "startup-status": "startup_status",
     "manual-status": "manual_status",
     "auto-status": "auto_status",
