@@ -25,6 +25,8 @@ MANUAL_STATUS = os.getenv("MANUAL_STATUS", "manual_status")
 AUTO_STATUS = os.getenv("AUTO_STATUS", "auto_status")
 ROBO_STATUS = os.getenv("ROBO_STATUS", "robo_status")
 IO_STATUS = os.getenv("IO_STATUS", "io_status")
+OEE_STATUS = os.getenv("OEE_STATUS", "oee_status") # New topic for OEE data
+
 # ─── kafka init ──────────────────────────────────────────────
 async def kafka_to_ws(name, topic):
     for attempt in range(10):  # Try for up to ~50 seconds
@@ -423,11 +425,40 @@ WS_TOPICS = {
     "auto-status": AUTO_STATUS,
     "robo-status": ROBO_STATUS,
     "io-status": IO_STATUS,
-    
+    "oee-status": OEE_STATUS,
     "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC
 }
-
 class ConnectionManager:
+    def __init__(self):
+        # FIX THIS: Use active_connections consistently
+        self.active_connections = {k: set() for k in WS_TOPICS.keys()} # Use .keys() for safety too
+        self.pending_write_responses = {}
+
+    async def connect(self, stream_name, ws: WebSocket):
+        await ws.accept()
+        # Ensure using self.active_connections here
+        if stream_name in self.active_connections:
+            self.active_connections[stream_name].add(ws)
+            print(f"[WS Manager] Client connected to '{stream_name}' from {ws.client}")
+        else:
+            print(f"[WS Manager] Warning: Client connected to unknown stream '{stream_name}'")
+
+    def disconnect(self, stream_name, ws: WebSocket):
+        # Ensure using self.active_connections here
+        if stream_name in self.active_connections:
+            self.active_connections[stream_name].discard(ws)
+            print(f"[WS Manager] Client disconnected from '{stream_name}' from {ws.client}")
+
+    async def broadcast(self, stream_name, msg):
+        living_connections = set()
+        # Ensure iterating over self.active_connections
+        for ws in self.active_connections.get(stream_name, set()):
+            try:
+                await ws.send_text(msg)
+                living_connections.add(ws)
+            except Exception as e:
+                print(f"[WS Manager] Error broadcasting to {ws.client} on '{stream_name}': {e}. Removing.")
+        self.active_connections[stream_name] = living_connections # And updating it here
     def __init__(self):
         self.active = {k: set() for k in WS_TOPICS}
         # A mapping from request_id to specific WebSocket connection
