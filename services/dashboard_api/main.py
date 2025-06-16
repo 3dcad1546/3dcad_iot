@@ -423,6 +423,7 @@ WS_TOPICS = {
     "auto-status": AUTO_STATUS,
     "robo-status": ROBO_STATUS,
     "io-status": IO_STATUS,
+    
     "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC
 }
 

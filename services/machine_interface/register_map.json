@@ -81,5 +81,42 @@
             "CONTINUE_PROGRAM": 4106,
             "START_PROGRAM": 4107
         }
+    },
+    "oee": {
+        "read": {
+            
+            "MACHINE_STATUS_RUN": 4700,
+            "MACHINE_STATUS_IDLE": 4701,
+            "MACHINE_STATUS_STOPPED": 4702,
+            "MACHINE_STATUS_BREAKDOWN": 4703,
+            "MACHINE_STATUS_MAINTENANCE_MODE": 4704,
+            "MACHINE_AVAILABILITY_STATUS": 4705,
+            "MACHINE_PLANNED_DOWNTIME_STATUS": 4706,
+
+            "CYCLE_START_STOP_FLAG": 4707, 
+            "ALARM_MESSAGE_STRING": [4708, 10],
+
+            "ACTUAL_CYCLE_TIME_MS": 4718, 
+            "TARGET_CYCLE_TIME_MS": 4719, 
+
+            "OK_PARTS_COUNT_TOTAL": 4720,
+            "NOK_PARTS_COUNT_TOTAL": 4721,
+            "TOTAL_PART_COUNT_GLOBAL": 4722,
+            "SHIFT_A_OK_PARTS_COUNT": 4723,
+            "SHIFT_A_NOK_PARTS_COUNT": 4724,
+            "SHIFT_A_TOTAL_PART_COUNT": 4725,
+
+
+            "SHIFT_B_OK_PARTS_COUNT": 4726,
+            "SHIFT_B_NOK_PARTS_COUNT": 4727,
+            "SHIFT_B_TOTAL_PART_COUNT": 4728,
+
+
+            "SHIFT_C_OK_PARTS_COUNT": 4729,
+            "SHIFT_C_NOK_PARTS_COUNT": 4730,
+            "SHIFT_C_TOTAL_PART_COUNT": 4731
+        }
     }
+
+    
 }
