@@ -1,0 +1,85 @@
+{
+    "startup": {
+        "read": {
+            "INPUT_CONVEYOR_MODE_POS": 1000,
+            "CONTROLLER_STATUS": 1001,
+            "PROGRAM_STATUS": 1002,
+            "ACTUAL_POS": 1003,
+            "ACTUAL_SPEED": 1004,
+            "JOG_SPEED": 1005
+        },
+        "write": {
+            "HOME": 2000,
+            "INITIALIZE": 2001,
+            "OP_ENABLE": 2002,
+            "START": 2003,
+            "STOP": 2004
+        }
+    },
+    "manual": {
+        "read": {
+            "INPUT_CONVEYOR_MODE_POS": 1100,
+            "CONTROLLER_STATUS": 1101,
+            "PROGRAM_STATUS": 1102,
+            "ACTUAL_POS": 1103,
+            "ACTUAL_SPEED": 1104,
+            "JOG_SPEED": 1105
+        },
+        "write": {
+            "TARGET_POS": 2100,
+            "TARGET_SPEED": 2101,
+            "HOME": 2102,
+            "INITIALIZE": 2103,
+            "JOG_FORWARD": 2104,
+            "JOG_REVERSE": 2105,
+            "OP_ENABLE": 2106,
+            "START": 2107,
+            "STOP": 2108
+        }
+    },
+    "auto": {
+        "read": {
+            "OK": 3000,
+            "NOK": 3001,
+            "NR": 3002,
+            "SKIP": 3004,
+            "BARCODE_1": 3100,
+            "BARCODE_2": 3116,
+            "BARCODE_3": 3132,
+            "BARCODE_4": 3148,
+            "ALARM": 3200,
+            "RUNNING_MSG": 3201,
+            "PLC_KEEPALIVE_BIT": 3202,
+            "VISION_COMM_OK": 3203,
+            "SCARRA_ROBOT_COMM_OK": 3204,
+            "LCMR_COMM_OK": 3205,
+            "GANTRY_1": 3206,
+            "GANTRY_2": 3207
+        }
+    },
+    "io": {
+        "read": {
+            "DIGITAL_INPUT_1": 1000,
+            "DIGITAL_INPUT_2": 1001,
+            "DIGITAL_OUTPUT_1": 1002,
+            "DIGITAL_OUTPUT_2": 1003
+        }
+    },
+    "robo": {
+        "read": {
+            "ROBOT_MODE": 4000,
+            "CONTROLLER_STATUS": 4001,
+            "PROGRAM_STATUS": 4002
+        },
+        "write": {
+            "ABORT_PROGRAM": 4100,
+            "HOME_PROGRAM": 4101,
+            "MAIN_PROGRAM": 4102,
+            "INITIALIZE_PROGRAM": 4103,
+            "PAUSE_PROGRAM": 4104,
+            "ERROR_ACKNOWLEDGE": 4105,
+            "CONTINUE_PROGRAM": 4106,
+            "START_PROGRAM": 4107
+        }
+    }
+}

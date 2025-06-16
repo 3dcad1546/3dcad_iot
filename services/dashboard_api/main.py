@@ -12,9 +12,19 @@ from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconn
 from pydantic import BaseModel
 from typing import Optional
 from influxdb_client import InfluxDBClient, WritePrecision, WriteOptions
-from aiokafka import AIOKafkaConsumer
-from aiokafka.errors import KafkaConnectionError
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer # Import AIOKafkaProducer
+from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
 
+# ─── Configuration ──────────────────────────────────────────────
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092") # Using KAFKA_BOOTSTRAP_SERVERS env var name
+PLC_WRITE_COMMANDS_TOPIC = os.getenv("PLC_WRITE_COMMANDS_TOPIC", "plc_write_commands")
+PLC_WRITE_RESPONSES_TOPIC = os.getenv("PLC_WRITE_RESPONSES_TOPIC", "plc_write_responses") # For optional write acknowledgements from PLC Gateway
+MACHINE_STATUS  = os.getenv("MACHINE_STATUS", "machine_status")
+STARTUP_STATUS = os.getenv("STARTUP_STATUS", "startup_status")
+MANUAL_STATUS = os.getenv("MANUAL_STATUS", "manual_status")
+AUTO_STATUS = os.getenv("AUTO_STATUS", "auto_status")
+ROBO_STATUS = os.getenv("ROBO_STATUS", "robo_status")
+IO_STATUS = os.getenv("IO_STATUS", "io_status")
 # ─── kafka init ──────────────────────────────────────────────
 async def kafka_to_ws(name, topic):
     for attempt in range(10):  # Try for up to ~50 seconds
@@ -25,19 +35,55 @@ async def kafka_to_ws(name, topic):
                 auto_offset_reset="latest"
             )
             await consumer.start()
+            print(f"[{name}] Kafka consumer for topic '{topic}' started.")
             break
-        except KafkaConnectionError:
-            print(f"[{name}] Kafka not ready. Retrying ({attempt + 1}/10)...")
+        except AIOKafkaNoBrokersAvailable:
+            print(f"[{name}] Kafka not ready for consumer (topic: {topic}). Retrying ({attempt + 1}/10)...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            print(f"[{name}] Error starting Kafka consumer for topic '{topic}': {e}. Retrying ({attempt + 1}/10)...")
             await asyncio.sleep(5)
     else:
-        raise RuntimeError(f"Kafka not available for topic {topic}")
+        raise RuntimeError(f"Kafka not available for consumer topic {topic} after multiple attempts.")
 
     try:
         async for msg in consumer:
+            # print(f"[{name}] Received Kafka message for broadcast: {msg.value.decode()}") # Debug
             await mgr.broadcast(name, msg.value.decode())
+    except Exception as e:
+        print(f"[{name}] Error during Kafka consumption for topic '{topic}': {e}")
     finally:
-        await consumer.stop()
+        if consumer:
+            await consumer.stop()
+            print(f"[{name}] Kafka consumer for topic '{topic}' stopped.")
 
+# ─── Kafka Producer (for sending write commands) ──────────────────────────────────────────────
+kafka_producer: Optional[AIOKafkaProducer] = None
+
+async def init_kafka_producer():
+    global kafka_producer
+    for attempt in range(10):
+        try:
+            producer = AIOKafkaProducer(
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                max_request_size=2048576, # Default is 1MB, increase if large messages expected
+                request_timeout_ms=30000 # Default is 30s
+            )
+            await producer.start()
+            kafka_producer = producer
+            print("[Kafka Producer] AIOKafkaProducer started successfully.")
+            return
+        except AIOKafkaNoBrokersAvailable:
+            print(f"[Kafka Producer] Kafka not ready. Retrying ({attempt + 1}/10)...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            print(f"[Kafka Producer] Error starting AIOKafkaProducer: {e}. Retrying ({attempt + 1}/10)...")
+            await asyncio.sleep(5)
+    raise RuntimeError("AIOKafkaProducer not available after multiple attempts.")
+
+
+# ─── FastAPI App Initialization ──────────────────────────────────────────────
 app = FastAPI()
 
 # ─── PostgreSQL Setup ──────────────────────────────────────────────
@@ -105,6 +151,13 @@ class LoginRequest(BaseModel):
 class ScanRequest(BaseModel):
     serial: str
     result: str  # "pass" | "fail" | "scrap"
+
+class PlcWriteCommand(BaseModel):
+    section: str
+    tag_name: str
+    value: int
+    request_id: Optional[str] = None # For tracking responses
+
 
 _current_operator: Optional[str] = None
 def require_login():
@@ -363,66 +416,172 @@ WS_TOPICS = {
     # "mes-logs": "mes_uploads",
     # "trace-logs": "trace_logs",
     #"scan-results": "scan_results",
-    "machine-status":"machine_status",
+    "machine-status":MACHINE_STATUS,
     #"station-status": "station_flags",
-    "startup-status": "startup_status",
-    "manual-status": "manual_status",
-    "auto-status": "auto_status",
-    "robo-status": "robo_status",
-    "io-status": "io_status"
+    "startup-status": STARTUP_STATUS,
+    "manual-status": MANUAL_STATUS,
+    "auto-status": AUTO_STATUS,
+    "robo-status": ROBO_STATUS,
+    "io-status": IO_STATUS,
+    "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC
 }
 
 class ConnectionManager:
     def __init__(self):
         self.active = {k: set() for k in WS_TOPICS}
+        # A mapping from request_id to specific WebSocket connection
+        self.pending_write_responses = {} # request_id -> WebSocket
 
-    async def connect(self, name, ws: WebSocket):
+    async def connect(self, stream_name, ws: WebSocket):
         await ws.accept()
-        self.active[name].add(ws)
+        if stream_name in self.active_connections:
+            self.active_connections[stream_name].add(ws)
+            print(f"[WS Manager] Client connected to '{stream_name}' from {ws.client}")
+        else:
+            print(f"[WS Manager] Warning: Client connected to unknown stream '{stream_name}'")
 
-    def disconnect(self, name, ws: WebSocket):
-        self.active[name].discard(ws)
 
-    async def broadcast(self, topic, msg):
-        living = set()
-        for ws in self.active[topic]:
+    def disconnect(self, stream_name, ws: WebSocket):
+        if stream_name in self.active_connections:
+            self.active_connections[stream_name].discard(ws)
+            print(f"[WS Manager] Client disconnected from '{stream_name}' from {ws.client}")
+
+    async def broadcast(self, stream_name, msg):
+        living_connections = set()
+        for ws in self.active_connections.get(stream_name, set()):
             try:
                 await ws.send_text(msg)
-                living.add(ws)
-            except:
-                pass
-        self.active[topic] = living
+                living_connections.add(ws)
+            except Exception as e:
+                print(f"[WS Manager] Error broadcasting to {ws.client} on '{stream_name}': {e}. Removing.")
+        self.active_connections[stream_name] = living_connections
+        # print(f"[WS Manager] Broadcasted to {len(living_connections)} clients on '{stream_name}'.") # Debug
+    
+    async def send_write_response_to_client(self, request_id: str, message: dict):
+        ws = self.pending_write_responses.pop(request_id, None)
+        if ws:
+            try:
+                await ws.send_json({"type": "plc_write_response", "data": message})
+                print(f"[WS Manager] Sent specific write response for {request_id} to {ws.client}")
+            except Exception as e:
+                print(f"[WS Manager] Error sending specific write response to {ws.client} for {request_id}: {e}")
+        else:
+            print(f"[WS Manager] No pending client for request_id {request_id} for write response.")
+
 
 mgr = ConnectionManager()
 
 
-
+# ─── Startup and Shutdown Events ─────────────────────────────────────────────────────────
 @app.on_event("startup")
-async def start_ws_consumers():
+async def startup_event():
+    await init_kafka_producer() # Initialize AIOKafkaProducer
     for name, topic in WS_TOPICS.items():
         asyncio.create_task(kafka_to_ws(name, topic))
+    
+    # NEW: Start consumer for PLC write responses from PLC Gateway
+    asyncio.create_task(listen_for_plc_write_responses())
 
-async def kafka_to_ws(name, topic):
-    for attempt in range(10):  # Try for up to ~50 seconds
+@app.on_event("shutdown")
+async def shutdown_event():
+    if kafka_producer:
+        await kafka_producer.stop()
+        print("[Kafka Producer] AIOKafkaProducer stopped.")
+    # Close PostgreSQL connection
+    if conn:
+        conn.close()
+        print("PostgreSQL connection closed.")
+    # Close InfluxDB client
+    if influx_client:
+        influx_client.close()
+        print("InfluxDB client closed.")
+    # Note: AIOKafkaConsumer tasks should handle their own stopping in finally blocks
+
+# ─── New Handler for Incoming PLC Write Commands via WebSocket ──────────────────────────
+async def handle_plc_write_command_ws(websocket: WebSocket):
+    """
+    Handles incoming PLC write commands from the Dashboard UI via WebSocket.
+    Publishes valid commands to the PLC_WRITE_COMMANDS_TOPIC Kafka topic.
+    """
+    async for message_str in websocket.iter_text(): # Use iter_text for cleaner loop
+        try:
+            # Parse the incoming WebSocket message as a JSON command
+            command_data = json.loads(message_str)
+            command = PlcWriteCommand(**command_data) # Validate with Pydantic model
+
+            # Generate a request_id if not provided by the client
+            if not command.request_id:
+                command.request_id = str(uuid.uuid4())
+            
+            # Store the WebSocket client connection to send response back later
+            mgr.pending_write_responses[command.request_id] = websocket
+            
+            # Convert Pydantic model back to dict for Kafka
+            kafka_message = command.model_dump_json().encode('utf-8')
+            
+            if kafka_producer is None:
+                raise RuntimeError("Kafka producer not initialized.")
+
+            # Publish the command to Kafka
+            await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, value=kafka_message)
+            
+            print(f"[WS Handler] Published PLC write command for request_id '{command.request_id}' to Kafka.")
+            
+            # Send an immediate acknowledgement back to the UI
+            await websocket.send_json({"type": "ack", "status": "pending", "request_id": command.request_id, "message": "Command sent to PLC queue."})
+
+        except json.JSONDecodeError:
+            await websocket.send_json({"type": "error", "message": "Invalid JSON format for PLC write command."})
+            print(f"[WS Handler] Invalid JSON received from {websocket.client}: {message_str}")
+        except ValueError as ve: # Pydantic validation error
+            await websocket.send_json({"type": "error", "message": f"Invalid command data: {ve}"})
+            print(f"[WS Handler] Pydantic validation error from {websocket.client}: {ve}")
+        except RuntimeError as re:
+            await websocket.send_json({"type": "error", "message": str(re)})
+            print(f"[WS Handler] Runtime error: {re}")
+        except Exception as e:
+            await websocket.send_json({"type": "error", "message": f"An internal server error occurred: {e}"})
+            print(f"[WS Handler] Unexpected error in handle_plc_write_command_ws: {e}")
+
+# ─── New Consumer for PLC Write Responses from PLC Gateway ──────────────────────────
+async def listen_for_plc_write_responses():
+    consumer = None
+    for attempt in range(10):
         try:
             consumer = AIOKafkaConsumer(
-                topic,
+                PLC_WRITE_RESPONSES_TOPIC,
                 bootstrap_servers=KAFKA_BOOTSTRAP,
-                auto_offset_reset="latest"
+                auto_offset_reset="latest",
+                group_id="dashboard-write-response-listener" # Unique consumer group for this service
             )
             await consumer.start()
+            print(f"[Response Listener] Kafka consumer for topic '{PLC_WRITE_RESPONSES_TOPIC}' started.")
             break
-        except KafkaConnectionError:
-            print(f"[{name}] Kafka not ready. Retrying ({attempt + 1}/10)...")
+        except AIOKafkaNoBrokersAvailable:
+            print(f"[Response Listener] Kafka not ready for response consumer. Retrying ({attempt + 1}/10)...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            print(f"[Response Listener] Error starting Kafka response consumer: {e}. Retrying ({attempt + 1}/10)...")
             await asyncio.sleep(5)
     else:
-        raise RuntimeError(f"Kafka not available for topic {topic}")
+        raise RuntimeError(f"Kafka not available for response topic {PLC_WRITE_RESPONSES_TOPIC} after multiple attempts.")
 
     try:
         async for msg in consumer:
-            await mgr.broadcast(name, msg.value.decode())
+            response_data = json.loads(msg.value.decode('utf-8'))
+            print(f"[Response Listener] Received PLC write response: {response_data}")
+            request_id = response_data.get("request_id")
+            if request_id:
+                await mgr.send_write_response_to_client(request_id, response_data)
+            else:
+                print(f"[Response Listener] Response missing request_id: {response_data}")
+    except Exception as e:
+        print(f"[Response Listener] Error during Kafka response consumption: {e}")
     finally:
-        await consumer.stop()
+        if consumer:
+            await consumer.stop()
+            print(f"[Response Listener] Kafka response consumer stopped.")
+
 
 @app.websocket("/ws/{stream}")
 async def ws_endpoint(stream: str, ws: WebSocket):
