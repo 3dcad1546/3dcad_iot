@@ -176,16 +176,16 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
 
     if not client.connected:
         response_payload["message"] = "Modbus client not connected."
-        if aiokafka_producer:
-            await aiokafka_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
+        if aio_producer:
+            await aio_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
         print(f"Warning: Modbus client not connected when trying to write to section '{section}'.")
         return
 
     config_data = read_json_file("register_map.json")
     if not config_data:
         response_payload["message"] = "Could not read register map for writing."
-        if aiokafka_producer:
-            await aiokafka_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
+        if aio_producer:
+            await aio_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
         print("Error: Could not read register map for writing.")
         return
     
@@ -193,8 +193,8 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
     section_data = TAG_MAP.get(section)
     if not section_data:
         response_payload["message"] = f"Section '{section}' not found in register map for writing."
-        if aiokafka_producer:
-            await aiokafka_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
+        if aio_producer:
+            await aio_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
         print(f"Error: Section '{section}' not found in register map for writing.")
         return
 
@@ -235,8 +235,8 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         response_payload["status"] = "SUCCESS"
         response_payload["message"] = "All tags written successfully."
     
-    if aiokafka_producer:
-        await aiokafka_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
+    if aio_producer:
+        await aio_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=response_payload)
     else:
         print("Error: AIOKafkaProducer not initialized, cannot send write response.")
 
@@ -284,8 +284,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     words_response = await client.read_holding_registers(*BARCODE_1_BLOCK)
                     if not words_response.isError():
                         barcode1 = decode_string(words_response.registers)
-                        if aiokafka_producer:
-                            await aiokafka_producer.send(KAFKA_TOPIC_BARCODE, value={"barcode": barcode1, "camera": "1", "ts": now})
+                        if aio_producer:
+                            await aio_producer.send(KAFKA_TOPIC_BARCODE, value={"barcode": barcode1, "camera": "1", "ts": now})
                         await client.write_register(BARCODE_FLAG_1, 0)
                         print(f"Barcode 1 ({barcode1}) triggered.")
                     else:
@@ -295,8 +295,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     words_response = await client.read_holding_registers(*BARCODE_2_BLOCK)
                     if not words_response.isError():
                         barcode2 = decode_string(words_response.registers)
-                        if aiokafka_producer:
-                            await aiokafka_producer.send(KAFKA_TOPIC_BARCODE, value={"barcode": barcode2, "camera": "2", "ts": now})
+                        if aio_producer:
+                            await aio_producer.send(KAFKA_TOPIC_BARCODE, value={"barcode": barcode2, "camera": "2", "ts": now})
                         await client.write_register(BARCODE_FLAG_2, 0)
                         print(f"Barcode 2 ({barcode2}) triggered.")
                     else:
@@ -338,9 +338,9 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 })
 
                 # Publish to the specific MACHINE_STATUS topic
-                if aiokafka_producer:
-                    await aiokafka_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=status_set_1)
-                    await aiokafka_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=status_set_2)
+                if aio_producer:
+                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=status_set_1)
+                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=status_set_2)
             else:
                 print("Error reading status registers:", statuses_response)
 
@@ -379,10 +379,10 @@ async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interv
             for section, topic in topic_map.items():
                 section_data = await read_tags_async(client, section)
                 
-                if aiokafka_producer and section_data:
+                if aio_producer and section_data:
                     # Add timestamp to the data payload for each section
                     section_data["ts"] = now
-                    await aiokafka_producer.send(topic, value=section_data)
+                    await aio_producer.send(topic, value=section_data)
                     print(f"[{now}] Sent '{section}' tags to Kafka topic '{topic}'.")
                 else:
                     pass # Or print a message if no data or producer not ready
@@ -434,8 +434,8 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
 
             if not all([section, tag_name, value is not None]):
                 print(f"[{now}] Invalid write command received: {command}. Skipping.")
-                if aiokafka_producer:
-                    await aiokafka_producer.send(KAFKA_TOPIC_WRITE_RESPONSES, value={
+                if aio_producer:
+                    await aio_producer.send(KAFKA_TOPIC_WRITE_RESPONSES, value={
                         "request_id": request_id,
                         "status": "FAILED",
                         "message": "Invalid command format. Requires 'section', 'tag_name', 'value'.",
@@ -453,8 +453,8 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
                 
             except asyncio.TimeoutError:
                 print(f"[{now}] Timeout while writing to PLC for command (request_id: {request_id}): {command}")
-                if aiokafka_producer:
-                    await aiokafka_producer.send(KAFKA_TOPIC_WRITE_RESPONSES, value={
+                if aio_producer:
+                    await aio_producer.send(KAFKA_TOPIC_WRITE_RESPONSES, value={
                         "request_id": request_id,
                         "status": "TIMEOUT",
                         "message": "PLC write operation timed out.",
@@ -463,8 +463,8 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
                     })
             except Exception as e:
                 print(f"[{now}] Error executing write command (request_id: {request_id}) {command}: {e}")
-                if aiokafka_producer:
-                    await aiokafka_producer.send(KAFKA_TOPIC_WRITE_RESPONSES, value={
+                if aio_producer:
+                    await aio_producer.send(KAFKA_TOPIC_WRITE_RESPONSES, value={
                         "request_id": request_id,
                         "status": "FAILED",
                         "message": f"Error during PLC write: {str(e)}",
