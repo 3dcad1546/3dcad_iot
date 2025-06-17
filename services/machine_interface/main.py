@@ -12,6 +12,7 @@ PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
 PLC_PORT = int(os.getenv("PLC_PORT", "502"))
 
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
+print("KAFKA_BROKER =", repr(KAFKA_BROKER), "| Type:", type(KAFKA_BROKER))
 KAFKA_TOPIC_BARCODE = os.getenv("BARCODE_TOPIC", "trigger_events")
 
 # Existing general machine status topic (from 13-bit array)
