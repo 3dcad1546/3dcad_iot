@@ -49,47 +49,38 @@ STATUS_BITS = [
 ]
 
 # ─── Global AIOKafkaProducer Instance ──────────────────────────────────
-aiokafka_producer: AIOKafkaProducer = None
+aio_producer: AIOKafkaProducer = None
 
 async def init_aiokafka_producer():
-    global aiokafka_producer
+    global aio_producer
     logger.info(f"Connecting to Kafka at {KAFKA_BROKER}")
-    print(f"Connecting to Kafka broker at {KAFKA_BROKER} for AIOKafkaProducer...")
+    broker = str(KAFKA_BROKER).strip()
+
+    def serializer(value):
+        try:
+            return json.dumps(value).encode('utf-8')
+        except Exception as e:
+            logger.error(f"[Kafka serializer] Failed for {value}: {e}")
+            return b'{"error": "serialization failed"}'
 
     for attempt in range(10):
         try:
-            # Ensure KAFKA_BROKER is a string and properly formatted
-            broker = str(KAFKA_BROKER).strip()
-            
-            # Define the serializer function
-            def serializer(value):
-                try:
-                    return json.dumps(value).encode('utf-8')  # Always return bytes
-                except Exception as e:
-                    logger.error(f"[Kafka serializer] Error serializing message: {value} | Exception: {e}")
-                    return None
-
-
             producer = AIOKafkaProducer(
                 bootstrap_servers=broker,
                 value_serializer=serializer,
                 request_timeout_ms=10000,
                 api_version=(2, 8, 1)
             )
-
-            
             await producer.start()
-            aiokafka_producer = producer
-            logger.info("Kafka producer started successfully.")
-            print("[AIOKafka Producer] Connection established.")
+            aio_producer = producer
+            await aio_producer.send_and_wait("diagnostic", {"status": "connected"})
+            logger.info("Kafka producer started and diagnostic sent.")
             return
         except KafkaConnectionError as e:
-            logger.warning(f"Kafka connection error ({attempt + 1}/10): {str(e)}")
-            await asyncio.sleep(5)
+            logger.warning(f"Kafka connection error ({attempt + 1}/10): {e}")
         except Exception as e:
-            logger.warning(f"Kafka error ({attempt + 1}/10): {str(e)}")
-            await asyncio.sleep(5)
-    
+            logger.warning(f"Kafka error ({attempt + 1}/10): {e}")
+        await asyncio.sleep(5)
     raise RuntimeError("Kafka producer failed after 10 attempts")
 
 
@@ -524,33 +515,20 @@ async def main():
         if client.connected:
             print("Closing Modbus client connection.")
             client.close()
-        if aiokafka_producer:
-            await aiokafka_producer.stop()
+        if aio_producer:
+            await aio_producer.stop()
             print("AIOKafkaProducer closed.")
 
 
 # ─── Main ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     try:
-        print("Starting PLC Machine Interface Service...")
+        logger.info("Starting PLC Machine Interface Service...")
         if os.name == 'nt':
             import asyncio
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        # Run the main async function
-        import logging
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler('machine_interface.log')
-            ]
-        )
-        print("Initializing Modbus client and Kafka producer...")
-         # Run the main async function
-         # This will block until the service is stopped or an error occurs    
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nServer stopped by user.")
+        logger.info("Server stopped by user.")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logger.exception(f"An unexpected error occurred: {e}")
