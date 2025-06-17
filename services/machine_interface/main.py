@@ -55,7 +55,9 @@ async def init_aiokafka_producer():
     global aio_producer
     logger.info(f"Connecting to Kafka at {KAFKA_BROKER}")
     broker = str(KAFKA_BROKER).strip()
-    broker_list = [ broker ]                   # <<< wrap it in a list
+    print(broker,"brokee")
+    broker_list = [ broker ]
+    print(broker_list,"broker_list")                   # <<< wrap it in a list
     logger.info(f"Connecting to Kafka at {broker_list!r}")
     def serializer(value):
         try:
@@ -71,7 +73,7 @@ async def init_aiokafka_producer():
                 bootstrap_servers=broker_list,
                 value_serializer=serializer,
                 request_timeout_ms=10000,
-                api_version=(2, 8, 1)
+                # api_version=(2, 8, 1)
             )
             await producer.start()
             aio_producer = producer
@@ -144,7 +146,7 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
             continue
 
         try:
-            rr = await client.read_holding_registers(addr, count)
+            rr = await client.read_holding_registers(address=addr, count=count)
             if rr.isError():
                 out[name] = None
                 print(f"Error reading tag '{name}' at address {addr} (count {count}): {rr}")
