@@ -63,11 +63,12 @@ async def init_aiokafka_producer():
             
             # Define the serializer function
             def serializer(value):
-                if value is None:
+                try:
+                    return json.dumps(value).encode('utf-8')  # Always return bytes
+                except Exception as e:
+                    logger.error(f"[Kafka serializer] Error serializing message: {value} | Exception: {e}")
                     return None
-                if isinstance(value, (str, bytes)):
-                    return value.encode('utf-8')
-                return json.dumps(value).encode('utf-8')
+
 
             producer = AIOKafkaProducer(
                 bootstrap_servers=broker,
@@ -75,6 +76,7 @@ async def init_aiokafka_producer():
                 request_timeout_ms=10000,
                 api_version=(2, 8, 1)
             )
+
             
             await producer.start()
             aiokafka_producer = producer
