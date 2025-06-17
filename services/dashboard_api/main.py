@@ -423,13 +423,13 @@ WS_TOPICS = {
     "auto-status": AUTO_STATUS,
     "robo-status": ROBO_STATUS,
     "io-status": IO_STATUS,
-    
+
     "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC
 }
 
 class ConnectionManager:
     def __init__(self):
-        self.active = {k: set() for k in WS_TOPICS}
+        self.active = {k: set() for k in WS_TOPICS.keys()} # Active WebSocket connections per stream
         # A mapping from request_id to specific WebSocket connection
         self.pending_write_responses = {} # request_id -> WebSocket
 
