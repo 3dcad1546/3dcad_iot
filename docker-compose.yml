@@ -98,12 +98,12 @@ services:
   machine-interface:
     build: 
       context: ./services/machine_interface
-    # network_mode: "host"  # Shares host's network stack
+  # network_mode: "host"  # Shares host's network stack
     container_name: machine_interface
     environment:
       PLC_IP: 192.168.10.3  # Actual PLC I
       PLC_PORT: 502
-      KAFKA_BROKER: "kafka:9092"
+      KAFKA_BROKER: kafka:9092
     depends_on:
       kafka:
         condition: service_healthy

@@ -55,7 +55,8 @@ async def init_aiokafka_producer():
     global aio_producer
     logger.info(f"Connecting to Kafka at {KAFKA_BROKER}")
     broker = str(KAFKA_BROKER).strip()
-
+    broker_list = [ broker ]                   # <<< wrap it in a list
+    logger.info(f"Connecting to Kafka at {broker_list!r}")
     def serializer(value):
         try:
             return json.dumps(value).encode('utf-8')
@@ -65,8 +66,9 @@ async def init_aiokafka_producer():
 
     for attempt in range(10):
         try:
+            
             producer = AIOKafkaProducer(
-                bootstrap_servers=broker,
+                bootstrap_servers=broker_list,
                 value_serializer=serializer,
                 request_timeout_ms=10000,
                 api_version=(2, 8, 1)
