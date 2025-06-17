@@ -145,10 +145,13 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
                     out[name] = decode_string(rr.registers)
                 else:
                     out[name] = rr.registers[0]
-        except (KafkaConnectionError, AIOKafkaNoBrokersAvailable, Exception) as e:
-            logger.warning(f"Kafka not ready ({attempt + 1}/10): {e}")
-            await asyncio.sleep(5)
-    raise RuntimeError("Kafka producer failed after 10 attempts")
+        except ModbusException as e: # Catch Modbus-specific errors
+            print(f"Modbus error reading tag '{name}' at {addr}: {e}")
+            out[name] = None
+        except Exception as e: # Catch any other unexpected errors during read
+            print(f"Unexpected error reading tag '{name}' at {addr}: {e}")
+            out[name] = None
+    return out 
 
 async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dict, request_id: str = None):
     """
