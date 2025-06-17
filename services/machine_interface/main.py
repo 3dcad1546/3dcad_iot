@@ -55,11 +55,14 @@ async def init_aiokafka_producer():
     global aiokafka_producer
     logger.info(f"Connecting to Kafka at {KAFKA_BROKER}")
     print(f"Connecting to Kafka broker at {KAFKA_BROKER} for AIOKafkaProducer...")
+    if os.name == 'nt':  # Check if running on Windows
+        import asyncio
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     for attempt in range(10):
         try:
-            servers = KAFKA_BROKER.split(',') if isinstance(KAFKA_BROKER, str) else KAFKA_BROKER
+            broker = KAFKA_BROKER.strip()
             producer = AIOKafkaProducer(
-                bootstrap_servers=KAFKA_BROKER,
+                bootstrap_servers=[KAFKA_BROKER],
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                 request_timeout_ms=10000,
                 api_version=(2, 8, 1)
@@ -512,9 +515,19 @@ async def main():
 if __name__ == "__main__":
     try:
         print("Starting PLC Machine Interface Service...")
+        if os.name == 'nt':
+            import asyncio
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         # Run the main async function
         import logging
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler('machine_interface.log')
+            ]
+        )
         print("Initializing Modbus client and Kafka producer...")
          # Run the main async function
          # This will block until the service is stopped or an error occurs    
