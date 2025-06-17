@@ -2,10 +2,14 @@ import os
 import json
 import time
 import asyncio
+import logging
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
-from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
+from aiokafka import AIOKafkaProducer,AIOKafkaConsumer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
+
+logger = logging.getLogger("machine_interface")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ─── Configuration ─────────────────────────────────────────────────────
 PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
@@ -49,9 +53,11 @@ aiokafka_producer: AIOKafkaProducer = None
 
 async def init_aiokafka_producer():
     global aiokafka_producer
+    logger.info(f"Connecting to Kafka at {KAFKA_BROKER}")
     print(f"Connecting to Kafka broker at {KAFKA_BROKER} for AIOKafkaProducer...")
     for attempt in range(10):
         try:
+            servers = KAFKA_BROKER.split(',') if isinstance(KAFKA_BROKER, str) else KAFKA_BROKER
             producer = AIOKafkaProducer(
                 bootstrap_servers=KAFKA_BROKER,
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
@@ -60,15 +66,13 @@ async def init_aiokafka_producer():
             )
             await producer.start()
             aiokafka_producer = producer
+            logger.info("Kafka producer started successfully.")
             print("[AIOKafka Producer] Connection established.")
             return
-        except AIOKafkaNoBrokersAvailable:
-            print(f"[AIOKafka Producer] Kafka not ready. Retrying ({attempt + 1}/10)...")
+        except (KafkaConnectionError, AIOKafkaNoBrokersAvailable, Exception) as e:
+            logger.warning(f"Kafka not ready ({attempt + 1}/10): {e}")
             await asyncio.sleep(5)
-        except Exception as e:
-            print(f"[AIOKafka Producer] Error starting producer: {e}. Retrying ({attempt + 1}/10)...")
-            await asyncio.sleep(5)
-    raise RuntimeError("Failed to connect to AIOKafkaProducer after 10 attempts")
+    raise RuntimeError("Kafka producer failed after 10 attempts")
 
 
 # ─── Helper Functions (decode_string, read_json_file, async_write_tags - No change) ──────────────────────────
@@ -138,13 +142,10 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
                     out[name] = decode_string(rr.registers)
                 else:
                     out[name] = rr.registers[0]
-        except ModbusException as e:
-            out[name] = None
-            print(f"ModbusException reading tag '{name}' at address {addr} (count {count}): {e}")
-        except Exception as e:
-            out[name] = None
-            print(f"Exception reading tag '{name}' at address {addr} (count {count}): {e}")
-    return out
+        except (KafkaConnectionError, AIOKafkaNoBrokersAvailable, Exception) as e:
+            logger.warning(f"Kafka not ready ({attempt + 1}/10): {e}")
+            await asyncio.sleep(5)
+    raise RuntimeError("Kafka producer failed after 10 attempts")
 
 async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dict, request_id: str = None):
     """
