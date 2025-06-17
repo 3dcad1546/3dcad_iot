@@ -369,7 +369,7 @@ async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interv
                     # Add timestamp to the data payload for each section
                     section_data["ts"] = now
                     await aiokafka_producer.send(topic, value=section_data)
-                    # print(f"[{now}] Sent '{section}' tags to Kafka topic '{topic}'.")
+                    print(f"[{now}] Sent '{section}' tags to Kafka topic '{topic}'.")
                 else:
                     pass # Or print a message if no data or producer not ready
 
