@@ -349,9 +349,13 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 })
 
                 # Publish to the specific MACHINE_STATUS topic
+                combined = {
+                    "set1": [ status_set_1 ],
+                    "set2": [ status_set_2 ],
+                }
                 if aio_producer:
-                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=status_set_1)
-                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=status_set_2)
+                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=combined)
+                    print(f"Published combined status: {combined}")
             else:
                 print("Error reading status registers:", statuses_response)
 
