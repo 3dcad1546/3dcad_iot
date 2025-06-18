@@ -122,6 +122,9 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
     if not config_data:
         print("Error: Could not read register map configuration.")
         return out
+    
+    # Debug print to verify config loading
+    print(f"Config data for section {section}: {json.dumps(config_data.get(section, {}), indent=2)}")
 
     TAG_MAP = config_data.get("tags", config_data)
     section_data = TAG_MAP.get(section)
@@ -147,6 +150,7 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
 
         try:
             #rr = await client.read_holding_registers(address=addr, count=count)
+            print("Address: {addr}")
             rr = await client.read_coils(address=addr, count=count)
             if rr.isError():
                 out[name] = None
