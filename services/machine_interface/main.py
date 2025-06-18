@@ -149,9 +149,10 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
             continue
 
         try:
-            #rr = await client.read_holding_registers(address=addr, count=count)
-            print("Address: {addr}")
-            rr = await client.read_coils(address=addr, count=count)
+            rr = await client.read_holding_registers(address=addr, count=count)
+            print(f"Address: {addr}")
+            # rr = await client.read_coils(address=addr, count=count)
+            print(rr,"rrrrrr")
             if rr.isError():
                 out[name] = None
                 print(f"Error reading tag '{name}' at address {addr} (count {count}): {rr}")

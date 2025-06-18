@@ -18,7 +18,7 @@ async def main():
 
     try:
         # Read holding registers (example: address 100, 2 registers)
-        response = await client.read_holding_registers(address=3400, count=2)
+        response = await client.read_holding_registers(address=1000, count=2)
         if not response.isError():
             print(f"📦 Read registers: {response.registers}")
         else:
