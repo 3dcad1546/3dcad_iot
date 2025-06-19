@@ -1,19 +1,19 @@
 {
     "startup": {
         "read": {
-            "INPUT_CONVEYOR_MODE_POS": 10001,
-            "CONTROLLER_STATUS": 10012,
-            "PROGRAM_STATUS": 10022,
-            "ACTUAL_POS": 10032,
-            "ACTUAL_SPEED": 10042,
-            "JOG_SPEED": 10052
+            "INPUT_CONVEYOR_MODE_POS": 1000,
+            "CONTROLLER_STATUS": 1001,
+            "PROGRAM_STATUS": 1002,
+            "ACTUAL_POS": 1003,
+            "ACTUAL_SPEED": 1004,
+            "JOG_SPEED": 1005
         },
         "write": {
-            "HOME": 20002,
-            "INITIALIZE": 20012,
-            "OP_ENABLE": 20022,
-            "START": 20032,
-            "STOP": 20042
+            "HOME": 2000,
+            "INITIALIZE": 2001,
+            "OP_ENABLE": 2002,
+            "START": 2003,
+            "STOP": 2004
         }
     },
     "manual": {
@@ -151,7 +151,7 @@
             "PALLET1TARGETSPEED2": 1071
         },
         "write": {
-            "ABORTPROGRAM1": 1010,
+            "ABORTPROGRAM1": 1010.0,
             "HOMEPROGRAM1": 1010.1,
             "MAINPROGRAM1": 1010.2,
             "INITIALIZEPROGRAM1": 1010.3,
