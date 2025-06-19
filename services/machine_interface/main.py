@@ -43,9 +43,9 @@ BARCODE_2_BLOCK = (3132, 16)
 # 13-bit status array starts from register 3400 (No change)
 STATUS_REGISTER = 3400
 STATUS_BITS = [
-    "Input Station", "Trace", "Process", "MES", "Transfer-1", "Vision-1",
-    "PickPlace-1", "Transfer-2", "Vision-2", "PickPlace-2", "Trace Upload",
-    "MES Upload", "Unload Station"
+    "InputStation", "Trace", "Process", "MES", "Transfer-1", "Vision-1",
+    "PickPlace-1", "Transfer-2", "Vision-2", "PickPlace-2", "TraceUpload",
+    "MESUpload", "UnloadStation"
 ]
 
 # ─── Global AIOKafkaProducer Instance ──────────────────────────────────
@@ -176,6 +176,7 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
     Includes a request_id for response tracking.
     Publishes the result (SUCCESS/FAILED/TIMEOUT) to KAFKA_TOPIC_WRITE_RESPONSES.
     """
+    print("cominginsideasync_write_tags")
     response_payload = {
         "request_id": request_id,
         "section": section,
@@ -184,6 +185,7 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         "message": "Unknown error during write.",
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S")
     }
+    print(response_payload,"response_payload")
 
     if not client.connected:
         response_payload["message"] = "Modbus client not connected."
@@ -413,6 +415,7 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
     AIOKafkaConsumer loop that listens for write commands and executes them on the PLC.
     This runs entirely asynchronously.
     """
+    print("cominginsidekafka_write_consumer_loop")
     consumer = None
     print(f"Starting AIOKafkaConsumer for write commands on topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
     for attempt in range(10):

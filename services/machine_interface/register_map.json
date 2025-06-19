@@ -126,23 +126,55 @@
             "SAFETYDOOR-14": 1093,
             "SAFETYDOOR-15": 1094,
             "SAFETYDOOR-16": 1095
-                }
+            }
     },
     "robo": {
         "read": {
-            "ROBOT_MODE": 4000,
-            "CONTROLLER_STATUS": 4001,
-            "PROGRAM_STATUS": 4002
+            "ROBOTMODE1": 1000,
+            "CONTROLLERSTATUS1": 1001,
+            "PROGRAMSTATUS1": 1002,
+            "LCMRMODE1": 1020,
+            "CONTROLLERSTATUS2": 1021,
+            "PROGRAMSTATUS2": 1022,
+            "PALLET1ACTUALPOS1": 1023,
+            "PALLET1ACTUALSPEED1": 1025,
+            "PALLET1JOGSPEED1": 1027,
+            "PALLET1TARGETPOS1": 1029,
+            "PALLET1TARGETSPEED1": 1031,
+            "LCMRMODE2": 1060,
+            "CONTROLLERSTATUS3": 1061,
+            "PROGRAMSTATUS3": 1062,
+            "PALLET1ACTUALPOS2": 1063,
+            "PALLET1ACTUALSPEED2": 1065,
+            "PALLET1JOGSPEED2": 1067,
+            "PALLET1TARGETPOS2": 1069,
+            "PALLET1TARGETSPEED2": 1071
         },
         "write": {
-            "ABORT_PROGRAM": 4100,
-            "HOME_PROGRAM": 4101,
-            "MAIN_PROGRAM": 4102,
-            "INITIALIZE_PROGRAM": 4103,
-            "PAUSE_PROGRAM": 4104,
-            "ERROR_ACKNOWLEDGE": 4105,
-            "CONTINUE_PROGRAM": 4106,
-            "START_PROGRAM": 4107
+            "ABORTPROGRAM1": 1010,
+            "HOMEPROGRAM1": 1010.1,
+            "MAINPROGRAM1": 1010.2,
+            "INITIALIZEPROGRAM1": 1010.3,
+            "PAUSEPROGRAM1": 1010.4,
+            "ERRORACKNOWLEDGE1": 1010.5,
+            "CONTINUEPROGRAM1": 1010.6,
+            "STARTPROGRAM1": 1010.7,
+            "PALLET1HOME1": 1050.0,
+            "PALLET1INITIALIZE1": 1050.1,
+            "PALLET1OPENABLE1": 1050.2,
+            "PALLET1JOGFORWARD1": 1050.3,
+            "PALLET1JOGREVERSE1": 1050.4,
+            "PALLET1START1": 1050.5,
+            "PALLET1STOP1": 1050.6,
+            "ERRORACKNOWLEDGE2": 1050.7,
+            "PALLET1HOME2": 1090.0,
+            "PALLET1INITIALIZE2": 1090.1,
+            "PALLET1OPENENABLE2": 1090.2,
+            "PALLET1JOGFORWARD2": 1090.3,
+            "PALLET1JOGREVERSE2": 1090.4,
+            "PALLET1START2": 1090.5,
+            "PALLET1STOP2": 1090.6,
+            "ERRORACKNOWLEDGE3": 1090.7
         }
     },
     "oee": {
