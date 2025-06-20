@@ -333,20 +333,20 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 bc3_response = await client.read_holding_registers(address= 3132, count=16)
                 bc4_response = await client.read_holding_registers(address= 3148, count=16)
 
-                barcode1_status = decode_string(bc1_response.registers) if (not bc1_response.isError() and bc1_response.registers) else None
-                barcode2_status = decode_string(bc2_response.registers) if (not bc2_response.isError() and bc2_response.registers) else None
-                barcode3_status = decode_string(bc3_response.registers) if (not bc3_response.isError() and bc3_response.registers) else None
-                barcode4_status = decode_string(bc4_response.registers) if (not bc4_response.isError() and bc4_response.registers) else None
+                barcode1 = decode_string(bc1_response.registers) if (not bc1_response.isError() and bc1_response.registers) else None
+                barcode2 = decode_string(bc2_response.registers) if (not bc2_response.isError() and bc2_response.registers) else None
+                barcode3 = decode_string(bc3_response.registers) if (not bc3_response.isError() and bc3_response.registers) else None
+                barcode4 = decode_string(bc4_response.registers) if (not bc4_response.isError() and bc4_response.registers) else None
 
                 status_set_1.update({
-                    "barcode1": barcode1_status,
-                    "barcode2": barcode2_status,
+                    "barcode1": barcode1,
+                    "barcode2": barcode2,
                     "ts": now
                 })
 
                 status_set_2.update({
-                    "barcode3": barcode3_status,
-                    "barcode4": barcode4_status,
+                    "barcode3": barcode3,
+                    "barcode4": barcode4,
                     "ts": now
                 })
 
