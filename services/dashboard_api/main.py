@@ -10,7 +10,7 @@ import psycopg2.extensions
 import uuid
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from typing import Optional, Union
+from typing import Optional,Union
 from influxdb_client import InfluxDBClient, WritePrecision, WriteOptions
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer # Import AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
@@ -102,7 +102,9 @@ else:
 conn.autocommit = True
 cur = conn.cursor()
 
-
+# ─── UUID Generator ──────────────────────────────────────────────
+def generate_request_id() -> str:
+    return str(uuid.uuid4())
 
 # ─── Hot Reloadable Config ─────────────────────────────────────────
 _config_cache: dict[str, str] = {}
@@ -157,7 +159,7 @@ class ScanRequest(BaseModel):
 class PlcWriteCommand(BaseModel):
     section: str
     tag_name: str
-    value: int | float | str
+    value: int
     request_id: Optional[str] = None # For tracking responses
 
 
@@ -605,20 +607,11 @@ async def plc_write_ws(ws: WebSocket):
             data = await ws.receive_json()
             try:
                 command = PlcWriteCommand(**data)
-                request_id = command.request_id or str(uuid.uuid4())
+                request_id = command.request_id or generate_request_id()
                 kafka_message = command.model_copy(update={"request_id": request_id}).model_dump()
-                
                 mgr.pending_write_responses[request_id] = ws
                 await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, value=kafka_message)
-
-                # Optional: Send immediate ACK
-                await ws.send_json({
-                    "type": "ack",
-                    "status": "pending",
-                    "request_id": request_id,
-                    "message": "PLC write command enqueued"
-                })
             except Exception as e:
                 await ws.send_json({"type": "error", "message": str(e)})
     except WebSocketDisconnect:
-        mgr.disconnect(ws)
+        await mgr.disconnect(ws)
