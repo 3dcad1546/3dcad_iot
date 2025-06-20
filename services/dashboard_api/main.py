@@ -7,10 +7,10 @@ import asyncio
 import requests
 import psycopg2
 import psycopg2.extensions
-
+import uuid
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Union
 from influxdb_client import InfluxDBClient, WritePrecision, WriteOptions
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer # Import AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
@@ -157,7 +157,7 @@ class ScanRequest(BaseModel):
 class PlcWriteCommand(BaseModel):
     section: str
     tag_name: str
-    value: int
+    value: int | float | str
     request_id: Optional[str] = None # For tracking responses
 
 
@@ -597,3 +597,28 @@ async def ws_endpoint(stream: str, ws: WebSocket):
     except WebSocketDisconnect:
         mgr.disconnect(stream, ws)
 
+@app.websocket("/ws/plc-write")
+async def plc_write_ws(ws: WebSocket):
+    await mgr.connect(ws)
+    try:
+        while True:
+            data = await ws.receive_json()
+            try:
+                command = PlcWriteCommand(**data)
+                request_id = command.request_id or str(uuid.uuid4())
+                kafka_message = command.model_copy(update={"request_id": request_id}).model_dump()
+                
+                mgr.pending_write_responses[request_id] = ws
+                await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, value=kafka_message)
+
+                # Optional: Send immediate ACK
+                await ws.send_json({
+                    "type": "ack",
+                    "status": "pending",
+                    "request_id": request_id,
+                    "message": "PLC write command enqueued"
+                })
+            except Exception as e:
+                await ws.send_json({"type": "error", "message": str(e)})
+    except WebSocketDisconnect:
+        mgr.disconnect(ws)
