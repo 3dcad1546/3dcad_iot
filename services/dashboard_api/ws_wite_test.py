@@ -32,3 +32,22 @@ async def send_plc_write():
 
 if __name__ == "__main__":
     asyncio.run(send_plc_write())
+import asyncio
+import websockets
+import json
+
+async def send_write_command():
+    uri = "ws://localhost:8000/ws/plc-write"
+    async with websockets.connect(uri) as websocket:
+        command = {
+            "section": "startup",
+            "tag_name": "start_flag",
+            "value": 1
+        }
+        await websocket.send(json.dumps(command))
+
+        while True:
+            response = await websocket.recv()
+            print("Response:", response)
+
+asyncio.run(send_write_command())

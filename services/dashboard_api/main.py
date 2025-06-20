@@ -601,7 +601,7 @@ async def ws_endpoint(stream: str, ws: WebSocket):
 
 @app.websocket("/ws/plc-write")
 async def plc_write_ws(ws: WebSocket):
-    await mgr.connect(ws)
+    await mgr.connect("plc-write-responses", ws)  # CORRECT
     try:
         while True:
             data = await ws.receive_json()
@@ -609,11 +609,10 @@ async def plc_write_ws(ws: WebSocket):
                 command = PlcWriteCommand(**data)
                 request_id = command.request_id or str(uuid.uuid4())
                 kafka_message = command.model_copy(update={"request_id": request_id}).model_dump()
-                
+
                 mgr.pending_write_responses[request_id] = ws
                 await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, value=kafka_message)
 
-                # Optional: Send immediate ACK
                 await ws.send_json({
                     "type": "ack",
                     "status": "pending",
@@ -623,4 +622,4 @@ async def plc_write_ws(ws: WebSocket):
             except Exception as e:
                 await ws.send_json({"type": "error", "message": str(e)})
     except WebSocketDisconnect:
-        mgr.disconnect(ws)
+        mgr.disconnect("plc-write-responses", ws)
