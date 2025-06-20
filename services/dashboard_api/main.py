@@ -159,7 +159,7 @@ class ScanRequest(BaseModel):
 class PlcWriteCommand(BaseModel):
     section: str
     tag_name: str
-    value: int
+    value: int | float | str
     request_id: Optional[str] = None # For tracking responses
 
 
@@ -607,11 +607,20 @@ async def plc_write_ws(ws: WebSocket):
             data = await ws.receive_json()
             try:
                 command = PlcWriteCommand(**data)
-                request_id = command.request_id or generate_request_id()
+                request_id = command.request_id or str(uuid.uuid4())
                 kafka_message = command.model_copy(update={"request_id": request_id}).model_dump()
+                
                 mgr.pending_write_responses[request_id] = ws
                 await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, value=kafka_message)
+
+                # Optional: Send immediate ACK
+                await ws.send_json({
+                    "type": "ack",
+                    "status": "pending",
+                    "request_id": request_id,
+                    "message": "PLC write command enqueued"
+                })
             except Exception as e:
                 await ws.send_json({"type": "error", "message": str(e)})
     except WebSocketDisconnect:
-        await mgr.disconnect(ws)
+        mgr.disconnect(ws)
