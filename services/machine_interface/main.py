@@ -339,16 +339,17 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 barcode4_status = decode_string(bc4_response.registers) if (not bc4_response.isError() and bc4_response.registers) else None
 
                 status_set_1.update({
-                    "barcode1_at_status": barcode1_status,
-                    "barcode2_at_status": barcode2_status,
+                    "barcode1": barcode1_status,
+                    "barcode2": barcode2_status,
                     "ts": now
                 })
 
                 status_set_2.update({
-                    "barcode3_at_status": barcode3_status,
-                    "barcode4_at_status": barcode4_status,
+                    "barcode3": barcode3_status,
+                    "barcode4": barcode4_status,
                     "ts": now
                 })
+
 
                 # Publish to the specific MACHINE_STATUS topic
                 combined = {
