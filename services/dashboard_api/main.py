@@ -585,20 +585,6 @@ async def listen_for_plc_write_responses():
         if consumer:
             await consumer.stop()
             print(f"[Response Listener] Kafka response consumer stopped.")
-
-
-@app.websocket("/ws/{stream}")
-async def ws_endpoint(stream: str, ws: WebSocket):
-    if stream not in WS_TOPICS:
-        await ws.close(code=1008)
-        return
-    await mgr.connect(stream, ws)
-    try:
-        while True:
-            await ws.receive_text()  # Ignore input; server-push only
-    except WebSocketDisconnect:
-        mgr.disconnect(stream, ws)
-
 @app.websocket("/ws/plc-write")
 async def plc_write_ws(ws: WebSocket):
     await mgr.connect("plc-write-responses", ws)  # CORRECT
@@ -623,3 +609,17 @@ async def plc_write_ws(ws: WebSocket):
                 await ws.send_json({"type": "error", "message": str(e)})
     except WebSocketDisconnect:
         mgr.disconnect("plc-write-responses", ws)
+
+
+@app.websocket("/ws/{stream}")
+async def ws_endpoint(stream: str, ws: WebSocket):
+    if stream not in WS_TOPICS:
+        await ws.close(code=1008)
+        return
+    await mgr.connect(stream, ws)
+    try:
+        while True:
+            await ws.receive_text()  # Ignore input; server-push only
+    except WebSocketDisconnect:
+        mgr.disconnect(stream, ws)
+

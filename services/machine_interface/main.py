@@ -89,6 +89,49 @@ async def init_aiokafka_producer():
         await asyncio.sleep(5)
     raise RuntimeError("Kafka producer failed after 10 attempts")
 
+# Simulation of PLC
+async def simulate_plc_data():
+    """
+    Periodically send dummy status payloads to Kafka topics so dashboard_api
+    can pick them up over websockets.
+    """
+    print("🔧 Starting PLC data simulator…")
+    while True:
+        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        # build two simple sets
+        set1 = {"InputStation":1, "Trace":0, "MES":1, "ts": now}
+        set2 = {"UnloadStation":0, "OEE":100, "ts": now}
+        payload = {"set1":[set1], "set2":[set2]}
+        await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=payload)
+        # also simulate section‐specific topics if you like:
+        await aio_producer.send_and_wait(KAFKA_TOPIC_STARTUP_STATUS, value={"status":"OK","ts":now})
+        await asyncio.sleep(2)
+
+async def simulate_plc_write_responses():
+    """
+    Listen for write commands and immediately echo back a SUCCESS response.
+    """
+    consumer = AIOKafkaConsumer(
+        KAFKA_TOPIC_WRITE_COMMANDS,
+        bootstrap_servers=KAFKA_BROKER,
+        group_id="sim-write-resp",
+        value_deserializer=lambda x: json.loads(x.decode())
+    )
+    await consumer.start()
+    print("🔧 Write‐response simulator listening…")
+    async for msg in consumer:
+        cmd = msg.value
+        resp = {
+            "request_id": cmd.get("request_id"),
+            "section":   cmd.get("section"),
+            "tags":      {cmd.get("tag_name"): cmd.get("value")},
+            "status":    "SUCCESS",
+            "message":   "Simulated OK",
+            "ts":        time.strftime("%Y-%m-%dT%H:%M:%S")
+        }
+        await aio_producer.send_and_wait(KAFKA_TOPIC_WRITE_RESPONSES, value=resp)
+    await consumer.stop()
+
 
 # ─── Helper Functions (decode_string, read_json_file, async_write_tags - No change) ──────────────────────────
 def read_json_file(file_path):
@@ -498,7 +541,8 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
         if consumer:
             await consumer.stop()
             print("AIOKafkaConsumer for write commands stopped.")
-
+# ─── Toggle Simulation Mode ─────────────────────────────────────
+USE_SIMULATOR = os.getenv("USE_SIMULATOR", "false").lower() in ("1", "true", "yes")
 
 # ─── Main ──────────────────────────────────────────────────────────────
 async def main():
@@ -506,39 +550,48 @@ async def main():
     Main function to establish a single Modbus client connection
     and start all asynchronous tasks.
     """
-    client = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
+    if USE_SIMULATOR:
+        client = None
+        logger.warning("🔧 SIMULATOR MODE ENABLED — skipping real PLC connect")
+    else:     
+        client = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
 
-    print(f"Connecting to PLC at {PLC_HOST}:{PLC_PORT} for all tasks...")
-    await client.connect()
-    if not client.connected:
-        print("❌ Initial connection to PLC failed. Exiting.")
-        return
+        logger.info(f"Connecting to PLC at {PLC_HOST}:{PLC_PORT} for all tasks...")
+        await client.connect()
+        if not client.connected:
+            print("❌ Initial connection to PLC failed. Exiting.")
+            return
 
-    print(f"✅ Connected to PLC at {PLC_HOST}:{PLC_PORT}")
+        logger.info(f"✅ Connected to PLC at {PLC_HOST}:{PLC_PORT}")
 
     try:
         await init_aiokafka_producer()
 
-        # Specific PLC data (barcodes, 13-bit machine status)
-        asyncio.create_task(read_specific_plc_data(client))
-        
-        # Generic tags (now per-section topics)
-        asyncio.create_task(read_and_publish_per_section_loop(client, interval_seconds=5))
-        
-        # Kafka consumer for PLC write commands
-        asyncio.create_task(kafka_write_consumer_loop(client))
+        if USE_SIMULATOR:
+            # fire up simulators instead of real PLC loops
+            asyncio.create_task(simulate_plc_data())
+            asyncio.create_task(simulate_plc_write_responses())
+        else:
+            # Specific PLC data (barcodes, 13-bit machine status)
+            asyncio.create_task(read_specific_plc_data(client))
+            
+            # Generic tags (now per-section topics)
+            asyncio.create_task(read_and_publish_per_section_loop(client, interval_seconds=5))
+            
+            # Kafka consumer for PLC write commands
+            asyncio.create_task(kafka_write_consumer_loop(client))
 
         await asyncio.Future()
 
     except Exception as e:
-        print(f"An unexpected error occurred in main loop: {e}")
+        logger.exception(f"Unexpected error in main loop: {e}")
     finally:
         if client.connected:
-            print("Closing Modbus client connection.")
+            logger.info("Closing Modbus client connection.")
             client.close()
         if aio_producer:
             await aio_producer.stop()
-            print("AIOKafkaProducer closed.")
+            logger.info("AIOKafkaProducer closed.")
 
 
 # ─── Main ──────────────────────────────────────────────────────────────
