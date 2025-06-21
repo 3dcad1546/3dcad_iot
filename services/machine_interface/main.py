@@ -257,6 +257,49 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         return
 
     all_writes_successful = True
+    #for decimal address
+    # for name, val in tags.items():
+    #     addr_config = section_data.get("write", {}).get(name)
+    #     if addr_config is not None:
+    #         try:
+    #             if isinstance(addr_config, float):  # Bit-level access e.g. 1010.5
+    #                 register = int(addr_config)
+    #                 bit_index = int(round((addr_config - register) * 10))
+
+    #                 # Read current value of register
+    #                 rr = await client.read_holding_registers(register, 1)
+    #                 if rr.isError() or not rr.registers:
+    #                     raise Exception(f"Failed to read register {register} before bit write")
+
+    #                 current_value = rr.registers[0]
+
+    #                 # Modify the bit
+    #                 if int(val) == 1:
+    #                     new_value = current_value | (1 << bit_index)
+    #                 else:
+    #                     new_value = current_value & ~(1 << bit_index)
+
+    #                 # Write back the modified register
+    #                 write_rr = await client.write_register(register, new_value)
+    #                 if write_rr.isError():
+    #                     raise Exception(f"Failed to write modified register {register}")
+
+    #                 print(f"Bit write: {name} set bit {bit_index} at register {register} to {val}")
+
+    #             else:  # Full-register write (int)
+    #                 register = int(addr_config)
+    #                 write_rr = await client.write_register(register, int(val))
+    #                 if write_rr.isError():
+    #                     raise Exception(f"Write failed at register {register}")
+    #                 print(f"Full write: {name} written to {register} as {val}")
+
+    #         except Exception as e:
+    #             all_writes_successful = False
+    #             response_payload["message"] = str(e)
+    #             print(f"[WRITE ERROR] {e}")
+    #             break
+
+    # For without decimal address
     for name, val in tags.items():
         addr_config = section_data.get("write", {}).get(name)
         if addr_config is not None:
