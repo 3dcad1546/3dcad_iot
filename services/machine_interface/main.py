@@ -258,79 +258,79 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
 
     all_writes_successful = True
     #for decimal address
-    # for name, val in tags.items():
-    #     addr_config = section_data.get("write", {}).get(name)
-    #     if addr_config is not None:
-    #         try:
-    #             if isinstance(addr_config, float):  # Bit-level access e.g. 1010.5
-    #                 register = int(addr_config)
-    #                 bit_index = int(round((addr_config - register) * 10))
-
-    #                 # Read current value of register
-    #                 rr = await client.read_holding_registers(register, 1)
-    #                 if rr.isError() or not rr.registers:
-    #                     raise Exception(f"Failed to read register {register} before bit write")
-
-    #                 current_value = rr.registers[0]
-
-    #                 # Modify the bit
-    #                 if int(val) == 1:
-    #                     new_value = current_value | (1 << bit_index)
-    #                 else:
-    #                     new_value = current_value & ~(1 << bit_index)
-
-    #                 # Write back the modified register
-    #                 write_rr = await client.write_register(register, new_value)
-    #                 if write_rr.isError():
-    #                     raise Exception(f"Failed to write modified register {register}")
-
-    #                 print(f"Bit write: {name} set bit {bit_index} at register {register} to {val}")
-
-    #             else:  # Full-register write (int)
-    #                 register = int(addr_config)
-    #                 write_rr = await client.write_register(register, int(val))
-    #                 if write_rr.isError():
-    #                     raise Exception(f"Write failed at register {register}")
-    #                 print(f"Full write: {name} written to {register} as {val}")
-
-    #         except Exception as e:
-    #             all_writes_successful = False
-    #             response_payload["message"] = str(e)
-    #             print(f"[WRITE ERROR] {e}")
-    #             break
-
-    # For without decimal address
     for name, val in tags.items():
         addr_config = section_data.get("write", {}).get(name)
         if addr_config is not None:
-            if isinstance(addr_config, list):
-                addr = addr_config[0]
-            else:
-                addr = addr_config
-
             try:
-                rr = await client.write_register(addr, int(val))
-                if rr.isError():
-                    all_writes_successful = False
-                    print(f"Error writing tag '{name}' to address {addr}: {rr}")
-                    response_payload["message"] = f"Failed to write tag '{name}': {rr}"
-                else:
-                    print(f"Successfully wrote {val} to '{name}' at {addr}")
-            except ModbusException as e:
-                all_writes_successful = False
-                response_payload["message"] = f"ModbusException writing tag '{name}' to address {addr}: {e}"
-                print(response_payload["message"])
-                break
+                if isinstance(addr_config, float):  # Bit-level access e.g. 1010.5
+                    register = int(addr_config)
+                    bit_index = int(round((addr_config - register) * 10))
+
+                    # Read current value of register
+                    rr = await client.read_holding_registers(register, 1)
+                    if rr.isError() or not rr.registers:
+                        raise Exception(f"Failed to read register {register} before bit write")
+
+                    current_value = rr.registers[0]
+
+                    # Modify the bit
+                    if int(val) == 1:
+                        new_value = current_value | (1 << bit_index)
+                    else:
+                        new_value = current_value & ~(1 << bit_index)
+
+                    # Write back the modified register
+                    write_rr = await client.write_register(register, new_value)
+                    if write_rr.isError():
+                        raise Exception(f"Failed to write modified register {register}")
+
+                    print(f"Bit write: {name} set bit {bit_index} at register {register} to {val}")
+
+                else:  # Full-register write (int)
+                    register = int(addr_config)
+                    write_rr = await client.write_register(register, int(val))
+                    if write_rr.isError():
+                        raise Exception(f"Write failed at register {register}")
+                    print(f"Full write: {name} written to {register} as {val}")
+
             except Exception as e:
                 all_writes_successful = False
-                response_payload["message"] = f"Exception writing tag '{name}' to address {addr}: {e}"
-                print(response_payload["message"])
+                response_payload["message"] = str(e)
+                print(f"[WRITE ERROR] {e}")
                 break
-        else:
-            all_writes_successful = False
-            response_payload["message"] = f"Warning: Tag '{name}' not found in write section for '{section}'"
-            print(response_payload["message"])
-            break
+
+    # For without decimal address
+    # for name, val in tags.items():
+    #     addr_config = section_data.get("write", {}).get(name)
+    #     if addr_config is not None:
+    #         if isinstance(addr_config, list):
+    #             addr = addr_config[0]
+    #         else:
+    #             addr = addr_config
+
+    #         try:
+    #             rr = await client.write_register(addr, int(val))
+    #             if rr.isError():
+    #                 all_writes_successful = False
+    #                 print(f"Error writing tag '{name}' to address {addr}: {rr}")
+    #                 response_payload["message"] = f"Failed to write tag '{name}': {rr}"
+    #             else:
+    #                 print(f"Successfully wrote {val} to '{name}' at {addr}")
+    #         except ModbusException as e:
+    #             all_writes_successful = False
+    #             response_payload["message"] = f"ModbusException writing tag '{name}' to address {addr}: {e}"
+    #             print(response_payload["message"])
+    #             break
+    #         except Exception as e:
+    #             all_writes_successful = False
+    #             response_payload["message"] = f"Exception writing tag '{name}' to address {addr}: {e}"
+    #             print(response_payload["message"])
+    #             break
+    #     else:
+    #         all_writes_successful = False
+    #         response_payload["message"] = f"Warning: Tag '{name}' not found in write section for '{section}'"
+    #         print(response_payload["message"])
+    #         break
 
     if all_writes_successful:
         response_payload["status"] = "SUCCESS"

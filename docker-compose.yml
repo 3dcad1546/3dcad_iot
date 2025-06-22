@@ -109,8 +109,8 @@ services:
         condition: service_healthy
   oee_influx_writer:
     build:
-      context: .
-      dockerfile: ./Dockerfile.oee  # rename as needed
+      context: ./services/oee_influx_writer
+    container_name: oee_influx_writer
     environment:
       - KAFKA_BROKER=kafka:9092
       - OEE_STATUS_TOPIC=oee_status
