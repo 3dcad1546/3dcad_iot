@@ -345,7 +345,7 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
 def decode_string(words):
     """Convert list of 16-bit words into ASCII string."""
     if not isinstance(words, (list, tuple)):
-        print(f"Warning: decode_string received non-list/tuple input: {words}")
+        logging.warning(f"Warning: decode_string received non-list/tuple input: {words}")
         return ""
     
     raw_bytes = b''.join([(w & 0xFF).to_bytes(1, 'little') + ((w >> 8) & 0xFF).to_bytes(1, 'little') for w in words])
@@ -359,17 +359,17 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     """
     while True:
         if not client.connected:
-            print("❌ Async client not connected for specific data read. Attempting reconnect...")
+            logging.warning("❌ Async client not connected for specific data read. Attempting reconnect...")
             try:
                 await client.connect()
                 if not client.connected:
-                    print("❌ Could not reconnect to PLC for specific data read. Waiting...")
+                    logging.warning("❌ Could not reconnect to PLC for specific data read. Waiting...")
                     await asyncio.sleep(5)
                     continue
                 else:
-                    print("✅ Reconnected to PLC for specific data read.")
+                    logging.warning("✅ Reconnected to PLC for specific data read.")
             except Exception as e:
-                print(f"Error during reconnection attempt for specific data: {e}. Waiting...")
+                logging.error(f"Error during reconnection attempt for specific data: {e}. Waiting...")
                 await asyncio.sleep(5)
                 continue
 
@@ -388,9 +388,9 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                         if aio_producer:
                             await aio_producer.send(KAFKA_TOPIC_BARCODE, value={"barcode": barcode1, "camera": "1", "ts": now})
                         await client.write_register(BARCODE_FLAG_1, 0)
-                        print(f"Barcode 1 ({barcode1}) triggered.")
+                        logging.info(f"Barcode 1 ({barcode1}) triggered.")
                     else:
-                        print(f"Error reading BARCODE_1_BLOCK: {words_response}")
+                        logging.error(f"Error reading BARCODE_1_BLOCK: {words_response}")
                 
                 if flag2 == 1:
                     words_response = await client.read_holding_registers(*BARCODE_2_BLOCK)

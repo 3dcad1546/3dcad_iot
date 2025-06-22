@@ -107,6 +107,23 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+  oee_influx_writer:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.oee  # rename as needed
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - OEE_STATUS_TOPIC=oee_status
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=edgetoken
+      - INFLUXDB_ORG=EdgeOrg
+      - INFLUXDB_BUCKET=EdgeBucket
+    depends_on:
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+
 
   postgres:
     image: postgres:15

@@ -8,7 +8,8 @@ import requests
 import psycopg2
 import psycopg2.extensions
 import uuid
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
+from datetime import datetime, timedelta
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query
 from pydantic import BaseModel
 from typing import Optional,Union
 from influxdb_client import InfluxDBClient, WritePrecision, WriteOptions
@@ -392,22 +393,52 @@ def oee_current():
             **{k:rec.values[k] for k in rec.values if not k.startswith("_")}}
 
 @app.get("/api/oee/history")
-def oee_history(hours: int = 1):
+def oee_history(
+    # if start & end are provided, we'll use them; otherwise fall back to `hours`
+    hours: int = Query(1, ge=0, description="Look back this many hours if start/end are omitted"),
+    start: Optional[datetime] = Query(
+        None,
+        description="ISO8601 start time (e.g. 2025-06-20T00:00:00Z)",
+    ),
+    end: Optional[datetime] = Query(
+        None,
+        description="ISO8601 end time (e.g. 2025-06-21T00:00:00Z)",
+    ),
+):
+    # 1) determine our window
+    if start and end:
+        t0, t1 = start, end
+    else:
+        t1 = datetime.utcnow()
+        t0 = t1 - timedelta(hours=hours)
+
+    # Flux wants un-quoted literals like 2025-06-20T00:00:00Z
+    start_ts = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_ts   = t1.strftime("%Y-%m-%dT%H:%M:%SZ")
+
     flux = f'''
-      from(bucket:"{get_cfg("INFLUXDB_BUCKET")}")
-        |> range(start:-{hours}h)
-        |> filter(fn:(r)=>r._measurement=="oee")
-        |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
+      from(bucket: "{get_cfg("INFLUXDB_BUCKET")}")
+        |> range(start: {start_ts}, stop: {end_ts})
+        |> filter(fn: (r) => r._measurement == "oee")
+        |> pivot(
+             rowKey:   ["_time"],
+             columnKey: ["_field"],
+             valueColumn: "_value"
+           )
     '''
     tables = query_api.query(flux)
+
     data = []
     for table in tables:
         for rec in table.records:
-            entry = {"time":rec.get_time().isoformat()}
-            entry.update({fld:rec.values[fld] for fld in rec.values if fld not in ("_measurement",)})
+            entry = {"time": rec.get_time().isoformat()}
+            # grab all fields except Flux's internal ones
+            entry.update({k: rec.values[k] for k in rec.values if not k.startswith("_")})
             data.append(entry)
+
     if not data:
-        raise HTTPException(404, "No OEE history")
+        raise HTTPException(404, f"No OEE data in window {start_ts} → {end_ts}")
+
     return data
 
 
@@ -585,6 +616,7 @@ async def listen_for_plc_write_responses():
         if consumer:
             await consumer.stop()
             print(f"[Response Listener] Kafka response consumer stopped.")
+
 @app.websocket("/ws/plc-write")
 async def plc_write_ws(ws: WebSocket):
     await mgr.connect("plc-write-responses", ws)  # CORRECT
