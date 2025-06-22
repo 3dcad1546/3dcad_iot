@@ -292,7 +292,7 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         try:
             if bit_index is not None:
                 # read-modify-write single bit
-                rr = await client.read_holding_registers(register, 1)
+                rr = await client.read_holding_registers(register, count=1)
                 if rr.isError() or not rr.registers:
                     raise ModbusException(f"Read failed at {register}: {rr}")
                 current = rr.registers[0]

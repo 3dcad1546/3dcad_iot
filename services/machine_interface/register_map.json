@@ -151,9 +151,9 @@
             "PALLET1TARGETSPEED2": 1071
         },
         "write": {
-            "ABORTPROGRAM1": 1010.0,
-            "HOMEPROGRAM1": 1010.1,
-            "MAINPROGRAM1": 1010.2,
+            "ABORTPROGRAM1": [1010,0],
+            "HOMEPROGRAM1": [1010,1],
+            "MAINPROGRAM1": [1010,2],
             "INITIALIZEPROGRAM1": 1010.3,
             "PAUSEPROGRAM1": 1010.4,
             "ERRORACKNOWLEDGE1": 1010.5,
