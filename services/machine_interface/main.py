@@ -261,77 +261,65 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
 # ─── for decimal address────── 
 
     for name, val in tags.items():
-        addr_config = section_data.get("write", {}).get(name)
-
-        if addr_config is None:
+        raw_cfg = section_data.get("write", {}).get(name)
+        if raw_cfg is None:
             all_writes_successful = False
-            response_payload["message"] = f"Warning: Tag '{name}' not found in write section."
+            response_payload["message"] = f"Tag '{name}' not found in write section."
             print(response_payload["message"])
-            break # Exit loop if a tag is not configured
+            break
 
+        # 1) Normalize address config into (register, bit_index)
+        if isinstance(raw_cfg, (list, tuple)):
+            if len(raw_cfg) == 2:
+                register, bit_index = raw_cfg
+            elif len(raw_cfg) == 1:
+                register, bit_index = raw_cfg[0], None
+            else:
+                all_writes_successful = False
+                response_payload["message"] = f"Invalid write config for '{name}': {raw_cfg}"
+                print(response_payload["message"])
+                break
+        elif isinstance(raw_cfg, str) and "." in raw_cfg:
+            reg_str, bit_str = raw_cfg.split(".", 1)
+            register = int(reg_str)
+            bit_index = int(bit_str)
+        else:
+            # assume single int or numeric string
+            register = int(raw_cfg)
+            bit_index = None
+
+        # 2) Perform the write
         try:
-            register_address_str = str(addr_config) # Convert address to string for consistent parsing
-            
-            if '.' in register_address_str:
-                # This is potentially a bit-level address (e.g., "1010.5", "100.0", "1010.12")
-                parts = register_address_str.split('.')
-                if len(parts) != 2:
-                    raise ValueError(f"Invalid bit address format: '{addr_config}'. Expected 'REGISTER.BIT'.")
-                
-                try:
-                    register = int(parts[0])
-                    bit_index = int(parts[1])
-                except ValueError:
-                    raise ValueError(f"Invalid register or bit index in address '{addr_config}'. Must be integers.")
+            if bit_index is not None:
+                # read-modify-write single bit
+                rr = await client.read_holding_registers(register, 1)
+                if rr.isError() or not rr.registers:
+                    raise ModbusException(f"Read failed at {register}: {rr}")
+                current = rr.registers[0]
+                target = int(val)
+                if target not in (0, 1):
+                    raise ValueError(f"Invalid bit value {val} for '{name}'; must be 0 or 1.")
 
-                if not (0 <= bit_index < 16): # Common register size is 16 bits (0-15)
-                    raise ValueError(f"Bit index {bit_index} for register {register} is out of valid range (0-15).")
+                new = (current | (1 << bit_index)) if target else (current & ~(1 << bit_index))
+                wr = await client.write_register(register, new)
+                if wr.isError():
+                    raise ModbusException(f"Write failed at {register}: {wr}")
 
-                # Read current value of register
-                read_rr = await client.read_holding_registers(register, 1)
-                if read_rr.isError() or not read_rr.registers:
-                    raise ModbusException(f"Failed to read register {register} before bit write: {read_rr}")
+                print(f"[BIT WRITE] {name}: reg={register}, bit={bit_index} → {target}")
 
-                current_value = read_rr.registers[0]
+            else:
+                # full-register write
+                wr = await client.write_register(register, int(val))
+                if wr.isError():
+                    raise ModbusException(f"Write failed at {register}: {wr}")
 
-                # Modify the bit
-                target_val_int = int(val)
-                if target_val_int == 1:
-                    new_value = current_value | (1 << bit_index) # Set bit
-                elif target_val_int == 0:
-                    new_value = current_value & ~(1 << bit_index) # Clear bit
-                else:
-                    raise ValueError(f"Invalid value '{val}' for bit write. Must be 0 or 1.")
-
-                # Write back the modified register
-                write_rr = await client.write_register(register, new_value)
-                if write_rr.isError():
-                    raise ModbusException(f"Failed to write modified register {register}: {write_rr}")
-
-                print(f"Bit write: '{name}' set bit {bit_index} at register {register} to {val}")
-
-            else:  
-                # This is a full-register address (e.g., "1010", 1010)
-                try:
-                    register = int(register_address_str)
-                except ValueError:
-                    raise ValueError(f"Invalid full register address format: '{addr_config}'. Must be an integer.")
-
-                write_rr = await client.write_register(register, int(val))
-                if write_rr.isError():
-                    raise ModbusException(f"Write failed at register {register}: {write_rr}")
-                print(f"Full write: '{name}' written to {register} as {val}")
+                print(f"[FULL WRITE] {name}: reg={register} → {val}")
 
         except (ModbusException, ValueError) as e:
             all_writes_successful = False
             response_payload["message"] = str(e)
             print(f"[WRITE ERROR] {e}")
-            break # Stop processing on first error
-        except Exception as e:
-            all_writes_successful = False
-            response_payload["message"] = f"An unexpected error occurred for tag '{name}': {str(e)}"
-            print(response_payload["message"])
-            break # Stop processing on first error
+            break
 
 # ─── For without decimal address────── 
 
