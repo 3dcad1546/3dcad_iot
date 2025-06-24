@@ -10,7 +10,7 @@ WS_URL = "ws://localhost:8000/ws/plc-write"
 write_command = {
     "section": "auto",             # Section defined in your register_map
     "tag_name": "StartCycle",      # Tag you want to write to
-    "value": 1,                    # Value to write
+    "value": 1,                    # Value to write 
     "request_id": str(uuid.uuid4())  # Optional, can be omitted if auto-generated
 }
 
