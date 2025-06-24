@@ -160,58 +160,61 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
     """
     out = {}
     if not client.connected:
-        print(f"Warning: Modbus client not connected when trying to read section '{section}'.")
+        logging.info(f"Warning: Modbus client not connected when trying to read section '{section}'.")
         return out
 
     config_data = read_json_file("register_map.json")
     if not config_data:
-        print("Error: Could not read register map configuration.")
+        logging.info("Error: Could not read register map configuration.")
         return out
     
     # Debug print to verify config loading
-    print(f"Config data for section {section}: {json.dumps(config_data.get(section, {}), indent=2)}")
+    logging.info(f"Config data for section {section}: {json.dumps(config_data.get(section, {}), indent=2)}")
 
-    TAG_MAP = config_data.get("tags", config_data)
-    section_data = TAG_MAP.get(section)
+    section_data = config_data.get(section,{}).get("read",{})
     if not section_data:
-        print(f"Error: Section '{section}' not found in register map.")
+        logging.error(f"Error: Section '{section}' not found in register map.")
         return out
 
-    for name, config in section_data.get("read", {}).items():
-        addr = None
-        count = 1
-
-        if isinstance(config, list) and len(config) == 2:
-            addr, count = config
-        elif isinstance(config, int):
-            addr = config
+    for name, cfg in section_data.items():
+        # normalize to dict form
+        if isinstance(cfg, dict):
+            addr  = cfg["address"]
+            typ   = cfg.get("type","holding")
+            count = cfg.get("count", 1)
+        elif isinstance(cfg, list) and len(cfg)==2:
+            addr, count = cfg
+            typ = "holding"
+        elif isinstance(cfg, int):
+            addr, count, typ = cfg, 1, "holding"
         else:
-            print(f"Warning: Invalid address configuration for tag '{name}' in section '{section}': {config}. Skipping.")
-            continue
-
-        if addr is None:
-            print(f"Error: Address not defined for tag '{name}' in section '{section}'. Skipping.")
+            print(f"Skipping bad config for {name}: {cfg}")
             continue
 
         try:
-            print(f"About to read '{name}' – addr={addr!r}, count={count!r}")
-            rr = await client.read_holding_registers(address=addr, count=count)
-            
-            # rr = await client.read_coils(address=addr, count=count)
-            print(rr,"rr")
-            if rr.isError():
-                out[name] = None
-                print(f"Error reading tag '{name}' at address {addr} (count {count}): {rr}")
-            else:
-                if count > 1:
-                    out[name] = decode_string(rr.registers)
+            if typ == "coil":
+                rr = await client.read_coils(addr, count)
+                val = rr.bits[0] if not rr.isError() and rr.bits else None
+
+            else:  # holding register
+                rr = await client.read_holding_registers(addr, count)
+                if rr.isError() or not rr.registers:
+                    val = None
+                elif count>1:
+                    val = decode_string(rr.registers)
                 else:
-                    out[name] = rr.registers[0]
+                    val = rr.registers[0]
+
+            out[name] = val
+
+        except Exception as e:
+            print(f"Error reading {typ} {name}@{addr}: {e}")
+            out[name] = None
         except ModbusException as e: # Catch Modbus-specific errors
-            print(f"Modbus error reading tag '{name}' at {addr}: {e}")
+            logging.error(f"Modbus error reading tag '{name}' at {addr}: {e}")
             out[name] = None
         except Exception as e: # Catch any other unexpected errors during read
-            print(f"Unexpected error reading tag '{name}' at {addr}: {e}")
+            logging.error(f"Unexpected error reading tag '{name}' at {addr}: {e}")
             out[name] = None
     return out 
 
