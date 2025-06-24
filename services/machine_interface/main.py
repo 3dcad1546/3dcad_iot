@@ -193,19 +193,23 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
 
         try:
             if typ == "coil":
-                rr = await client.read_coils(addr, count)
-                val = rr.bits[0] if not rr.isError() and rr.bits else None
+                rr = await client.read_coils(address=addr, count=count, slave=1)
+                print(rr,"rrr")
+                # val = rr.bits[0] if not rr.isError() and rr.bits else None
+                state = rr.bits[0] if not rr.isError() and rr.bits else None
+                print(state,"state")
 
             else:  # holding register
                 rr = await client.read_holding_registers(addr, count)
                 if rr.isError() or not rr.registers:
                     val = None
-                elif count>1:
-                    val = decode_string(rr.registers)
-                else:
-                    val = rr.registers[0]
+                # elif count>1:
+                #     val = decode_string(rr.registers)
+                # else:
+                #     val = rr.registers[0]
 
-            out[name] = val
+            out[name] = state
+            print(out[name],"out[name]")
 
         except Exception as e:
             print(f"Error reading {typ} {name}@{addr}: {e}")
