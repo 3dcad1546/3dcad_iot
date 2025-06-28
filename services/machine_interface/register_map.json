@@ -20,7 +20,7 @@
     "manual": {
         "read": {
             "CONTROLLERSTATUS":{ "address": 1101, "type": "holding", "count": 1 },
-            "ACTUALSPEED": { "address": 1105, "type": "holding", "count": 1 },
+            "ACTUALSPEED": { "address": 1105, "type": "holding", "count": 2 },
             "CONNECTIONSTATUS": { "address": 1105, "type": "holding", "count": 1 }
             
         },

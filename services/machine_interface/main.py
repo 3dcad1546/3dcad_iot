@@ -3,12 +3,16 @@ import json
 import time
 import asyncio
 import logging
+import struct
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
 from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
 from pymodbus.constants import Endian
 from aiokafka import AIOKafkaProducer,AIOKafkaConsumer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
+from pymodbus.payload import BinaryPayloadDecoder
+from pymodbus.constants import Endian
+
 
 logger = logging.getLogger("machine_interface")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -191,23 +195,55 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
             print(f"Skipping bad config for {name}: {cfg}")
             continue
 
+      
+
+
         try:
             if typ == "coil":
                 rr = await client.read_coils(address=addr, count=count, slave=1)
                 print(rr, "rrr")
                 val = rr.bits[0] if not rr.isError() and rr.bits else None
                 print(val, "val")
-            else:  # holding register
+            else:
                 rr = await client.read_holding_registers(address=addr, count=count)
+                print("Raw register response:", rr)
+
                 if rr.isError() or not rr.registers:
+                    print(f"Error reading holding {name}@{addr}: Empty or Error")
                     val = None
-                elif count > 1:
-                    val = decode_string(rr.registers)
-                else:
+
+                elif len(rr.registers) == 2:
+                    # Combine two 16-bit registers into one 32-bit float
+                    try:
+                        # Pack the two registers into a byte array
+                        packed_data = struct.pack('>HH',  rr.registers[1],rr.registers[0])
+                        # Unpack the byte array as a single float
+                        val = struct.unpack('>f', packed_data)[0]
+                        print(f"Decoded float value: {val}")
+                    except Exception as e:
+                        print(f"Error decoding float for {name}: {e}")
+                        val = rr.registers  # Fallback: return raw registers
+
+                elif len(rr.registers) > 2:
+                    try:
+                        decoder = BinaryPayloadDecoder.fromRegisters(
+                            rr.registers, 
+                            byteorder=Endian.Big, 
+                            wordorder=Endian.Big
+                        )
+                        val = decoder.decode_string(len(rr.registers) * 2).rstrip('\x00')
+                    except Exception as e:
+                        print(f"Error decoding string for {name}: {e}")
+                        val = rr.registers  # Fallback
+
+                else:  # Single register
                     val = rr.registers[0]
 
             out[name] = val
             print(out[name], "out[name]")
+
+
+
 
 
         except Exception as e:
