@@ -1,69 +1,81 @@
 import os
-import time
-import requests
+import asyncio
 import json
-from kafka import KafkaProducer
-from kafka.errors import NoBrokersAvailable, KafkaError
+from datetime import datetime
+import aiohttp
+import psycopg2
+from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 
-# ─── Configuration from Environment ─────────────────────────────
-LOCAL_SERVER_URLS = os.getenv("LOCAL_SERVER_URLS", "").split(",")
-AUTH_TOKEN = os.getenv("LOCAL_SERVER_AUTH_TOKEN", "")
-POLLING_INTERVAL = int(os.getenv("POLLING_INTERVAL", "30"))
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
-RAW_TOPIC = os.getenv("RAW_KAFKA_TOPIC", "raw_server_data")
-LOG_TRIGGER_URL = os.getenv("TRACE_LOG_TRIGGER", "http://traceproxy:8765/v2/logs")
+DB_URL            = os.getenv("DB_URL")
+KAFKA_BOOTSTRAP   = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+POLL_TOPIC        = os.getenv("RAW_DATA_TOPIC", "raw_server_data")
+REQUEST_TOPIC     = os.getenv("POLL_REQUEST_TOPIC", "poll_requests")
+MACHINE_API_1     = os.getenv("POLL_API_1", "http://server1/api/data")
+MACHINE_API_2     = os.getenv("POLL_API_2", "http://server2/api/data")
 
-HEADERS = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
+async def fetch_and_publish(session, url, producer):
+    async with session.get(url, timeout=10) as resp:
+        resp.raise_for_status()
+        payload = await resp.json()
+    msg = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "source_url": url,
+        "data": payload
+    }
+    await producer.send_and_wait(POLL_TOPIC, msg)
 
-# ─── Kafka Setup ────────────────────────────────────────────────
-def get_producer():
-    for attempt in range(10):
+async def load_interval(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM config WHERE key='POLL_INTERVAL_SEC'")
+    row = cur.fetchone()
+    return int(row[0]) if row else 60  # default 60s
+
+async def poll_loop(producer, conn):
+    interval = await load_interval(conn)
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                await asyncio.gather(
+                    fetch_and_publish(session, MACHINE_API_1, producer),
+                    fetch_and_publish(session, MACHINE_API_2, producer),
+                )
+            except Exception as e:
+                print("Polling error:", e)
+            await asyncio.sleep(interval)
+
+async def handle_requests(consumer, session, producer):
+    async for msg in consumer:
         try:
-            producer = KafkaProducer(
-                bootstrap_servers=KAFKA_BROKER,
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                retries=5,
-                linger_ms=10,
-                request_timeout_ms=10000,
-                max_block_ms=10000
-            )
-            # Force metadata fetch to verify connection
-            producer.partitions_for(RAW_TOPIC)
-            print(f"[KafkaProducer] Connected to {KAFKA_BROKER}")
-            return producer
-        except NoBrokersAvailable:
-            print(f"[KafkaProducer] No broker available at {KAFKA_BROKER} (attempt {attempt+1}/10)")
-        except KafkaError as e:
-            print(f"[KafkaProducer] Error (attempt {attempt+1}/10): {e}")
-        time.sleep(5)
-    raise RuntimeError("KafkaProducer: Failed to connect after multiple retries")
-
-producer = get_producer()
-
-# ─── Polling Logic ───────────────────────────────────────────────
-def poll_and_push():
-    for url in LOCAL_SERVER_URLS:
-        try:
-            response = requests.get(url.strip(), headers=HEADERS, timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            print(f"[INFO] Fetched from {url}: {data}")
-            producer.send(RAW_TOPIC, data)
+            url = msg.value.decode()  # expect the URL to fetch
+            await fetch_and_publish(session, url, producer)
         except Exception as e:
-            print(f"[ERROR] Polling failed from {url}: {e}")
+            print("On-demand poll error:", e)
 
-# ─── Log Trigger Logic ───────────────────────────────────────────
-def trigger_log_upload():
-    try:
-        response = requests.post(LOG_TRIGGER_URL, timeout=3)
-        print(f"[TRACE UPLOAD] Triggered: {response.status_code}")
-    except Exception as e:
-        print(f"[TRACE UPLOAD ERROR] {e}")
+async def main():
+    # Postgres
+    pg = psycopg2.connect(DB_URL)
+    pg.autocommit = True
 
-# ─── Main Loop ───────────────────────────────────────────────────
-if __name__ == "__main__":
-    print("[Polling Service] Started")
-    while True:
-        poll_and_push()
-        trigger_log_upload()
-        time.sleep(POLLING_INTERVAL)
+    # Kafka Producer
+    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP,
+                                value_serializer=lambda v: json.dumps(v).encode())
+    await producer.start()
+
+    # Kafka Consumer for on-demand
+    consumer = AIOKafkaConsumer(REQUEST_TOPIC,
+        bootstrap_servers=KAFKA_BOOTSTRAP, auto_offset_reset="latest")
+    await consumer.start()
+
+    async with aiohttp.ClientSession() as session:
+        # start background tasks
+        await asyncio.gather(
+            poll_loop(producer, pg),
+            handle_requests(consumer, session, producer)
+        )
+
+    await producer.stop()
+    await consumer.stop()
+    pg.close()
+
+if __name__=="__main__":
+    asyncio.run(main())

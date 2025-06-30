@@ -28,6 +28,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  user_login:
+    build: ./user_login
+    container_name: user_login
+    environment:
+      - DB_URL=postgresql://edge:edgepass@postgres:5432/edgedb
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka: 
+        condition: service_healthy
   dashboard-api:
     build:
       context: ./services/dashboard_api
@@ -35,6 +47,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      USER_SVC_URL : http://user_login:8001
       DB_URL: postgres://user:password@postgres:5432/edgedb
       INFLUXDB_URL: http://influxdb:8086
       INFLUXDB_TOKEN: edgetoken
@@ -49,6 +62,8 @@ services:
       kafka:
         condition: service_healthy
       machine-interface:
+        condition: service_started
+      user_login:
         condition: service_started
 
   polling-service:
@@ -69,14 +84,14 @@ services:
       context: ./services/processing_service
     container_name: processing_service
     environment:
-      KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      TRACE_PROXY_HOST: trace-proxy
-      MES_UPLOAD_URL: http://mes-server/api/upload
       KAFKA_BROKER: kafka:9092
-      DB_URL: postgres://user:password@postgres:5432/edgedb
+      RAW_KAFKA_TOPIC: raw_server_data
+      TRIGGER_KAFKA_TOPIC: trigger_events
+      PLC_WRITE_COMMANDS_TOPIC: plc_write_commands
+      MES_PROCESS_CONTROL_URL: http://mes-server/api/pc
+      TRACE_PROXY_HOST: trace-proxy:8765
+      DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
+
     depends_on:
       kafka:
         condition: service_healthy
@@ -107,6 +122,10 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      user_login:
+        condition: service_started
+
+
   oee_influx_writer:
     build:
       context: ./services/oee_influx_writer
@@ -127,12 +146,12 @@ services:
 
   postgres:
     image: postgres:15
-    container_name: postgres
+    container_name: edge_pg
     restart: always
     environment:
       POSTGRES_DB: edgedb
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: edge
+      POSTGRES_PASSWORD: edgepass
     ports:
       - "5432:5432"
     volumes:
@@ -163,3 +182,7 @@ services:
 volumes:
   pgdata:
   influxdata:
+
+networks:
+  default:
+    name: edge_net

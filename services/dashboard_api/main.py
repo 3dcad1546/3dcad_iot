@@ -9,7 +9,7 @@ import psycopg2
 import psycopg2.extensions
 import uuid
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query, Header 
 from pydantic import BaseModel
 from typing import Optional,Union
 from influxdb_client import InfluxDBClient, WritePrecision, WriteOptions
@@ -17,7 +17,6 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer # Import AIOKafkaProduce
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
 
 # ─── Configuration ──────────────────────────────────────────────
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092") # Using KAFKA_BOOTSTRAP_SERVERS env var name
 PLC_WRITE_COMMANDS_TOPIC = os.getenv("PLC_WRITE_COMMANDS_TOPIC", "plc_write_commands")
 PLC_WRITE_RESPONSES_TOPIC = os.getenv("PLC_WRITE_RESPONSES_TOPIC", "plc_write_responses") # For optional write acknowledgements from PLC Gateway
 MACHINE_STATUS  = os.getenv("MACHINE_STATUS", "machine_status")
@@ -164,53 +163,71 @@ class PlcWriteCommand(BaseModel):
     request_id: Optional[str] = None # For tracking responses
 
 
-_current_operator: Optional[str] = None
-def require_login():
-    if not _current_operator:
-        raise HTTPException(401, "Operator not logged in")
+# _current_operator: Optional[str] = None
+# def require_login():
+#     if not _current_operator:
+#         raise HTTPException(401, "Operator not logged in")
+
+USER_SVC_URL = os.getenv("USER_SVC_URL", "http://user_login:8001")  # service name in Docker
+
+def require_login(token: str = Header(None, alias="X-Auth-Token")):
+    """
+    Call the user_login service to verify this token/session.
+    Must return the operator username on success.
+    """
+    if not token:
+        raise HTTPException(401, "Missing auth token")
+    resp = requests.get(f"{USER_SVC_URL}/api/verify", headers={"X-Auth-Token": token}, timeout=3)
+    if resp.status_code != 200:
+        raise HTTPException(401, "Invalid or expired session")
+    return resp.json()["username"]
 
 # ─── Config API ─────────────────────────────────────────────────────
 @app.post("/api/config")
-def update_config(item: dict, _=Depends(require_login)):
+def update_config(
+    item: dict, 
+    user: str = Depends(require_login)
+    ):
     cur.execute("UPDATE config SET value = %s WHERE key = %s", (item["value"], item["key"]))
     cur.execute("NOTIFY config_update, %s", (item["key"],))
     return {"message": f"Config {item['key']} updated"}
 
 @app.get("/api/config")
-def get_config():
+def get_config(user: str = Depends(require_login)):
     return _config_cache
 
-# ─── Login & Logout ─────────────────────────────────────────────────────────
-@app.post("/api/login")
-def login(req: LoginRequest):
-    global _current_operator
-    allowed_ops = get_cfg("OPERATOR_IDS", "").split(",")
-    if req.Username not in allowed_ops:
-        raise HTTPException(403, f"Operator '{req.Username}' not permitted")
 
-    body = {
-      "MachineId":     get_cfg("MACHINE_ID"),
-      "Process":       req.Process,
-      "Username":      req.Username,
-      "Password":      req.Password,
-      "CbsStreamName": get_cfg("CBS_STREAM_NAME")
-    }
-    resp = requests.post(get_cfg("MES_OPERATOR_LOGIN_URL"), json=body)
-    if resp.status_code != 200 or not resp.json().get("IsSuccessful"):
-        raise HTTPException(resp.status_code, "Login failed")
+# # ─── Login & Logout ─────────────────────────────────────────────────────────
+# @app.post("/api/login")
+# def login(req: LoginRequest):
+#     global _current_operator
+#     allowed_ops = get_cfg("OPERATOR_IDS", "").split(",")
+#     if req.Username not in allowed_ops:
+#         raise HTTPException(403, f"Operator '{req.Username}' not permitted")
 
-    _current_operator = req.Username
-    cur.execute(
-        "INSERT INTO operator_sessions(username, login_ts) VALUES(%s, NOW())",
-        (req.Username,)
-    )
-    return {"message": "Login successful"}
+#     body = {
+#       "MachineId":     get_cfg("MACHINE_ID"),
+#       "Process":       req.Process,
+#       "Username":      req.Username,
+#       "Password":      req.Password,
+#       "CbsStreamName": get_cfg("CBS_STREAM_NAME")
+#     }
+#     resp = requests.post(get_cfg("MES_OPERATOR_LOGIN_URL"), json=body)
+#     if resp.status_code != 200 or not resp.json().get("IsSuccessful"):
+#         raise HTTPException(resp.status_code, "Login failed")
 
-@app.post("/api/logout")
-def logout():
-    global _current_operator
-    _current_operator = None
-    return {"message": "Logged out"}
+#     _current_operator = req.Username
+#     cur.execute(
+#         "INSERT INTO operator_sessions(username, login_ts) VALUES(%s, NOW())",
+#         (req.Username,)
+#     )
+#     return {"message": "Login successful"}
+
+# @app.post("/api/logout")
+# def logout():
+#     global _current_operator
+#     _current_operator = None
+#     return {"message": "Logged out"}
 
 # ─── Health ─────────────────────────────────────────────────────────
 @app.get("/api/health")
@@ -219,7 +236,10 @@ def health():
 
 # ─── Scan Orchestration ─────────────────────────────────────────────────────
 @app.post("/api/scan")
-def scan_part(req: ScanRequest, _=Depends(require_login)):
+def scan_part(
+    req: ScanRequest, 
+    user: str = Depends(require_login)
+    ):
     serial = req.serial
     result = {}
 
@@ -230,7 +250,7 @@ def scan_part(req: ScanRequest, _=Depends(require_login)):
             json={
                 "UniqueId":      serial,
                 "MachineId":     get_cfg("MACHINE_ID"),
-                "OperatorId":    _current_operator,
+                "OperatorId":    user,
                 "Tools":         [],
                 "RawMaterials":  [],
                 "CbsStreamName": get_cfg("CBS_STREAM_NAME")
@@ -276,7 +296,7 @@ def scan_part(req: ScanRequest, _=Depends(require_login)):
         payload = {
           "UniqueIds":     [serial],
           "MachineIds":    [get_cfg("MACHINE_ID")],
-          "OperatorIds":   [_current_operator],
+          "OperatorIds":   [user],
           "Tools":         [],
           "RawMaterials":  [],
           "DateTimeStamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -325,7 +345,7 @@ def scan_part(req: ScanRequest, _=Depends(require_login)):
         # Final audit
         cur.execute(
             "INSERT INTO scan_audit(serial, operator, result, ts) VALUES(%s,%s,%s,NOW())",
-            (serial, _current_operator, req.result)
+            (serial, user, req.result)
         )
 
         return result
@@ -346,7 +366,10 @@ def scan_part(req: ScanRequest, _=Depends(require_login)):
 
 # ─── Sensors Endpoints ─────────────────────────────────────────────────────
 @app.get("/api/sensors/latest")
-def sensors_latest(source: str):
+def sensors_latest(
+    source: str,
+    user: str = Depends(require_login)
+    ):
     flux = f'''
       from(bucket:"{get_cfg("INFLUXDB_BUCKET")}")
         |> range(start:-1m)
@@ -360,7 +383,11 @@ def sensors_latest(source: str):
     return {"time":rec.get_time().isoformat(), "value":rec.get_value(), "source":rec.values.get("source")}
 
 @app.get("/api/sensors/history")
-def sensors_history(source: str, hours: int = 1):
+def sensors_history(
+    source: str, 
+    hours: int = 1,
+    user: str = Depends(require_login)
+    ):
     flux = f'''
       from(bucket:"{get_cfg("INFLUXDB_BUCKET")}")
         |> range(start:-{hours}h)
@@ -378,7 +405,7 @@ def sensors_history(source: str, hours: int = 1):
 
 # ─── OEE Endpoints ─────────────────────────────────────────────────────────
 @app.get("/api/oee/current")
-def oee_current():
+def oee_current(user: str = Depends(require_login)):
     flux = f'''
       from(bucket:"{get_cfg("INFLUXDB_BUCKET")}")
         |> range(start:-5m)
@@ -404,6 +431,7 @@ def oee_history(
         None,
         description="ISO8601 end time (e.g. 2025-06-21T00:00:00Z)",
     ),
+    user: str = Depends(require_login)
 ):
     # 1) determine our window
     if start and end:
@@ -618,7 +646,8 @@ async def listen_for_plc_write_responses():
             print(f"[Response Listener] Kafka response consumer stopped.")
 
 @app.websocket("/ws/plc-write")
-async def plc_write_ws(ws: WebSocket):
+async def plc_write_ws(ws: WebSocket,token: str = Header(None, alias="X-Auth-Token")):
+    operator = require_login(token)
     await mgr.connect("plc-write-responses", ws)  # CORRECT
     try:
         while True:
@@ -644,7 +673,8 @@ async def plc_write_ws(ws: WebSocket):
 
 
 @app.websocket("/ws/{stream}")
-async def ws_endpoint(stream: str, ws: WebSocket):
+async def ws_endpoint(stream: str, ws: WebSocket,token: str = Header(None, alias="X-Auth-Token")):
+    operator = require_login(token)
     if stream not in WS_TOPICS:
         await ws.close(code=1008)
         return

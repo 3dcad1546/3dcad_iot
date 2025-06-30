@@ -1,0 +1,5 @@
+fastapi>=0.95.0,<1.0.0
+uvicorn[standard]>=0.23.0,<1.0.0
+psycopg2-binary>=2.9.6
+requests>=2.31.0
+aiokafka>=0.8.0

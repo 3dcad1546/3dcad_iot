@@ -1,2 +1,3 @@
-requests
-kafka-python
+aiohttp>=3.9.0
+aiokafka>=0.8.0
+psycopg2-binary>=2.9.6

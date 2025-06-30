@@ -1,167 +1,217 @@
+# processing_service/main.py
+# ----------------------
+# Microservice responsible for consuming raw_server_data and trigger_events,
+# applying business logic, and emitting machine_commands for actuation.
+
 import os
+import asyncio
 import json
+import signal
 import requests
-import time
-import logging
-from kafka import KafkaConsumer, KafkaProducer
-from kafka.errors import KafkaError
+import uuid
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka.errors import NoBrokersAvailable
 import psycopg2
+from psycopg2.extras import RealDictCursor
 
-# ─── Logging Setup ─────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# ─── MES/Trace endpoints ─────────────────────────────
 
-# ─── Configuration ─────────────────────────────────────────────
-KAFKA_BROKER       = os.getenv("KAFKA_BROKER", "localhost:9092")
-RAW_TOPIC          = os.getenv("RAW_KAFKA_TOPIC", "raw_server_data")
-COMMAND_TOPIC      = os.getenv("COMMAND_KAFKA_TOPIC", "machine_commands")
-MES_UPLOAD_URL     = os.getenv("MES_UPLOAD_URL", "")
-TRACE_PROXY_HOST   = os.getenv("TRACE_PROXY_HOST", "localhost:8765")
-MACHINE_ID         = os.getenv("MACHINE_ID", "Machine01")
-OPERATOR_ID        = os.getenv("OPERATOR_ID", "OperatorX")
-CBS_STREAM         = os.getenv("CBS_STREAM_NAME", "Ignition")
-FAILURE_REASONS    = os.getenv("FAILURE_REASON_CODES", "REJECT").split(",")
-NCM_REASON_CODES   = os.getenv("NCM_REASON_CODES", "DEFECT").split(",")
+MES_PC_URL      = os.getenv("MES_PROCESS_CONTROL_URL")
+TRACE_PROXY     = os.getenv("TRACE_PROXY_HOST", "trace-proxy:8765")
 
-# ─── Kafka Consumer ────────────────────────────────────────────
-def get_consumer():
-    for attempt in range(10):
+# ─── Configuration from environment ─────────────────────────────
+KAFKA_BROKER   = os.getenv("KAFKA_BROKER", "kafka:9092")
+RAW_TOPIC      = os.getenv("RAW_KAFKA_TOPIC", "raw_server_data")
+TRIGGER_TOPIC  = os.getenv("TRIGGER_KAFKA_TOPIC", "trigger_events")
+PLC_WRITE_TOPIC = os.getenv("PLC_WRITE_COMMANDS_TOPIC", "plc_write_commands")
+CONSUMER_GROUP = os.getenv("CONSUMER_GROUP", "processing_service")
+DB_URL         = os.getenv("DB_URL")  # e.g. postgresql://user:pass@postgres:5432/db
+
+# ─── Initialize Postgres ─────────────────────────────────────────
+pg_conn = psycopg2.connect(DB_URL)
+pg_conn.autocommit = True
+pg_cur  = pg_conn.cursor(cursor_factory=RealDictCursor)
+
+# Ensure audit table exists
+pg_cur.execute("""
+CREATE TABLE IF NOT EXISTS mes_trace_history (
+    id SERIAL PRIMARY KEY,
+    serial TEXT,
+    step TEXT NOT NULL,
+    response_json JSONB NOT NULL,
+    ts TIMESTAMP DEFAULT NOW()
+);
+""")
+
+def load_machine_config(machine_id: str):
+    config_cur.execute("""
+      SELECT mes_process_control_url AS pc_url,
+             mes_upload_url      AS upload_url,
+             is_mes_enabled
+      FROM machine_config
+      WHERE machine_id = %s
+    """, (machine_id,))
+    row = config_cur.fetchone()
+    if not row:
+        raise RuntimeError(f"No machine_config for {machine_id}")
+    return row
+
+# ─── Kafka clients ───────────────────────────────────────────────
+kafka_consumer = None
+kafka_producer = None
+MACHINE_ID = os.getenv("MACHINE_ID")
+machine_cfg = load_machine_config(MACHINE_ID)
+
+async def init_kafka():
+    global kafka_consumer, kafka_producer
+   
+    # Producer: send machine_commands
+    for _ in range(5):
         try:
-            consumer = KafkaConsumer(
-                RAW_TOPIC,
+            kafka_producer = AIOKafkaProducer(
                 bootstrap_servers=KAFKA_BROKER,
-                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-                auto_offset_reset='latest',
-                enable_auto_commit=True,
-                group_id="processor-service",
-                consumer_timeout_ms=10000,
-                max_poll_records=10
+                value_serializer=lambda v: json.dumps(v).encode()
             )
-            logging.info("[KafkaConsumer] Connected.")
-            return consumer
-        except Exception as e:
-            logging.error(f"[KafkaConsumer] Connection failed (attempt {attempt+1}/10): {e}")
-            time.sleep(5)
-    raise RuntimeError("KafkaConsumer: Failed to connect after retries")
+            await kafka_producer.start()
+            print("[Processing] Kafka producer started.")
+            break
+        except NoBrokersAvailable:
+            print("[Processing] Kafka broker not available, retrying...")
+            await asyncio.sleep(3)
+    else:
+        raise RuntimeError("Cannot connect to Kafka producer")
 
-# ─── Kafka Producer ────────────────────────────────────────────
-def get_producer():
-    for attempt in range(10):
+    # Consumer: subscribe to raw and trigger topics
+    kafka_consumer = AIOKafkaConsumer(
+        RAW_TOPIC,
+        TRIGGER_TOPIC,
+        bootstrap_servers=KAFKA_BROKER,
+        group_id=CONSUMER_GROUP,
+        value_deserializer=lambda b: json.loads(b.decode())
+    )
+    await kafka_consumer.start()
+    print(f"[Processing] Subscribed to topics: {RAW_TOPIC}, {TRIGGER_TOPIC}")
+
+async def shutdown():
+    if kafka_consumer:
+        await kafka_consumer.stop()
+        print("[Processing] Kafka consumer stopped.")
+    if kafka_producer:
+        await kafka_producer.stop()
+        print("[Processing] Kafka producer stopped.")
+    pg_conn.close()
+    print("[Processing] Postgres connection closed.")
+
+# ─── Business logic stub ─────────────────────────────────────────
+def process_event(topic: str, msg: dict) -> dict:
+    """
+    If we got a trigger_events message, and mode_auto==True,
+    call MES PC, Trace PC, Trace Interlock sequentially,
+    collect success/failure into three bits, then emit.
+    """
+    if topic != TRIGGER_TOPIC:
+        return {"emit": False}
+
+    barcode   = msg.get("barcode")
+    is_auto   = msg.get("mode_auto", False)
+    result    = {"Trace":0, "Process":0, "MES":0}
+
+    if not is_auto:
+        # manual mode → do nothing, bits remain zero
+        return {"emit": True, "command":{
+            "section": "status_bits",
+            "tags":    result
+        }}
+
+    # 1) MES PC
+    if is_auto and machine_cfg["is_mes_enabled"]:
         try:
-            producer = KafkaProducer(
-                bootstrap_servers=KAFKA_BROKER,
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                retries=5,
-                linger_ms=10,
-                request_timeout_ms=10000,
-                max_block_ms=10000
-            )
-            logging.info("[KafkaProducer] Connected.")
-            return producer
-        except KafkaError as e:
-            logging.error(f"[KafkaProducer] Connection failed (attempt {attempt+1}/10): {e}")
-            time.sleep(5)
-    raise RuntimeError("KafkaProducer: Failed to connect after retries")
+            machine = msg.get("machine_id") or os.getenv("MACHINE_ID")
+            operator= msg.get("operator")   or os.getenv("DEFAULT_OPERATOR")
+            cbs     = msg.get("cbs_stream") or os.getenv("CBS_STREAM_NAME")
 
-consumer = get_consumer()
-producer = get_producer()
+            r = requests.post(machine_cfg["pc_url"], json={
+                "UniqueId":     barcode,
+                "MachineId":    machine,
+                "OperatorId":   operator,
+                "Tools":        [], "RawMaterials": [],
+                "CbsStreamName":cbs
+            }, timeout=5)
 
-# ─── PostgreSQL Setup ──────────────────────────────────────────
-DB_URL = os.getenv("DB_URL")
-for _ in range(10):
+            if r.status_code==200 and r.json().get("IsSuccessful"):
+                result["MES"] = 1
+        except Exception:
+            result["MES"] = 0
+
+    # 2) Trace Process Control
     try:
-        conn = psycopg2.connect(DB_URL)
-        break
-    except psycopg2.OperationalError:
-        print("PostgreSQL not ready, retrying...")
-        time.sleep(5)
-else:
-    raise RuntimeError("PostgreSQL not available")
-conn.autocommit = True
-cur = conn.cursor()
+        r = requests.get(f"http://{TRACE_PROXY}/v2/process_control",
+                        params={"serial": barcode, "serial_type":"band"}, timeout=3)
+        if r.status_code==200 and r.json().get("pass"):
+            result["Process"] = 1
+    except Exception:
+        result["Process"] = 0
 
-# ─── Helper Functions ──────────────────────────────────────────
-def trace_process_control(serial):
-    params = {"serial": serial, "serial_type": "band"}
-    resp = requests.get(f"http://{TRACE_PROXY_HOST}/v2/process_control", params=params)
-    resp.raise_for_status()
-    return resp.json()
+    # 3) Trace Interlock
+    try:
+        r = requests.post(f"http://{TRACE_PROXY}/interlock",
+                         params={"serial": barcode, "serial_type":"band"}, timeout=3)
+        if r.status_code==200 and r.json().get("pass"):
+            result["Trace"] = 1
+    except Exception:
+        result["Trace"] = 0
 
-def trace_interlock(serial):
-    params = {"serial": serial, "serial_type": "band"}
-    resp = requests.post(f"http://{TRACE_PROXY_HOST}/interlock", params=params)
-    resp.raise_for_status()
-    return resp.json()
-
-def upload_to_mes(serial, result):
-    payload = {
-        "UniqueIds": [serial],
-        "MachineIds": [MACHINE_ID],
-        "OperatorIds": [OPERATOR_ID],
-        "Tools": [],
-        "RawMaterials": [],
-        "DateTimeStamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "CbsStreamName": CBS_STREAM
+    # return a PLC‐write command on “status_bits”
+    return {
+      "emit":   True,
+      "command":{
+        "section": "status_bits",
+        "tags":    result,
+        "request_id": str(uuid.uuid4())
+      }
     }
 
-    if result == "pass":
-        payload.update({"IsPass": True, "IsFail": False, "IsScrap": False, "Defects": []})
-    elif result == "fail":
-        payload.update({
-            "IsPass": False, "IsFail": True, "IsScrap": False,
-            "FailureDefects": [{
-                "FailureReasonCodes": FAILURE_REASONS,
-                "NcmReasonCodes": NCM_REASON_CODES
-            }]
-        })
-    elif result == "scrap":
-        payload.update({
-            "IsPass": False, "IsFail": False, "IsScrap": True,
-            "Defects": [{"DefectCode": "Trace Scrap", "Quantity": 1}]
-        })
-    else:
-        raise ValueError("Invalid result type")
 
-    mes = requests.post(MES_UPLOAD_URL, json=payload)
-    mes.raise_for_status()
-    return mes.json()
-
-# ─── Processing Logic ──────────────────────────────────────────
-def process_data(data):
-    serial = data.get("serial")
-    result = data.get("result", "pass")
-    logging.info(f"[PROCESS] Serial: {serial} | Result: {result}")
-
+# ─── Main loop ───────────────────────────────────────────────────
+async def run():
+    await init_kafka()
+    print("[Processing Service] Started consuming... Press Ctrl+C to exit.")
     try:
-        tp = trace_process_control(serial)
-        if not tp.get("pass"):
-            raise Exception("Trace Process Control failed")
+        async for msg in kafka_consumer:
+            topic   = msg.topic
+            payload = msg.value
+            print(f"[Received] topic={topic} payload={payload}")
 
-        inter = trace_interlock(serial)
-        if not inter.get("pass"):
-            raise Exception("Trace Interlock failed")
+            # 1) Audit the incoming
+            pg_cur.execute(
+                "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
+                (payload.get("serial",""), topic, json.dumps(payload))
+            )
 
-        mes = upload_to_mes(serial, result)
+            # 2) Business logic
+            decision = process_event(topic, payload)
+            if decision.get("emit"):
+                cmd = decision["command"]
 
-        cur.execute(
-            "INSERT INTO mes_trace_history(serial, step, response_json, ts) VALUES (%s, %s, %s::jsonb, NOW())",
-            (serial, "auto_process", json.dumps(mes))
-        )
+                # 3) Send to PLC write queue
+                await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, cmd)
+                print(f"[Emitted→PLC] {cmd}")
 
-        producer.send(COMMAND_TOPIC, {
-            "serial": serial,
-            "command": "update_led",
-            "status": result
-        })
+                # 4) Log that command too
+                pg_cur.execute(
+                    "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
+                    (payload.get("serial",""), "machine_commands", json.dumps(cmd))
+                )
 
     except Exception as e:
-        logging.error(f"[ERROR] Serial: {serial} | Error: {e}")
-        cur.execute(
-            "INSERT INTO error_logs(context, error_msg, details, ts) VALUES (%s, %s, %s::jsonb, NOW())",
-            ("processor", str(e), json.dumps(data))
-        )
+        print(f"[Processing] Error in main loop: {e}")
+    finally:
+        await shutdown()
 
-# ─── Entrypoint ────────────────────────────────────────────────
-if __name__ == "__main__":
-    logging.info("[Processing Service] Started")
-    for message in consumer:
-        process_data(message.value)
+# ─── Entrypoint ───────────────────────────────────────────────────
+if __name__ == '__main__':
+    loop = asyncio.get_event_loop()
+    # Handle graceful shutdown
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda: asyncio.ensure_future(shutdown()))
+    loop.run_until_complete(run())

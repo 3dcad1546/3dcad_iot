@@ -1,14 +1,11 @@
-import os
-import json
-import time
-import asyncio
-import logging
+import os, json, time, asyncio, logging
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
 from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
 from pymodbus.constants import Endian
 from aiokafka import AIOKafkaProducer,AIOKafkaConsumer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
+import requests
 
 logger = logging.getLogger("machine_interface")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,6 +38,16 @@ BARCODE_FLAG_1 = 3303
 BARCODE_FLAG_2 = 3304
 BARCODE_1_BLOCK = (3100, 16)
 BARCODE_2_BLOCK = (3132, 16)
+
+# Mode 1 → Auto and 0 → Manual
+MODE_REGISTER    = int(os.getenv("MODE_REGISTER", "3310"))
+MES_PC_URL       = os.getenv("MES_PC_URL")
+TRACE_HOST       = os.getenv("TRACE_HOST", "trace-proxy")
+CBS_STREAM_NAME  = os.getenv("CBS_STREAM", "line1")
+
+# user login url
+
+USER_LOGIN_URL = os.getenv("USER_LOGIN_URL", "http://user_login:8001")
 
 # 13-bit status array starts from register 3400 (No change)
 STATUS_REGISTER = 3400
@@ -404,10 +411,23 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 continue
 
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            resp = requests.get(f"{USER_LOGIN_URL}/api/current_operator", timeout=1)
+            resp.raise_for_status()
+            operator = resp.json()["username"]
+        except Exception:
+            operator = None
 
         try:
             # Barcode Flags (No change in logic)
             flags_response = await client.read_holding_registers(address=BARCODE_FLAG_1, count=2)
+            # ─── Read Auto/Manual mode
+            mode_rr = await client.read_holding_registers(address=MODE_REGISTER, count=1)
+            if mode_rr.isError() or not mode_rr.registers:
+                is_auto = False
+            else:
+                is_auto = (mode_rr.registers[0] == 1)
+
             if not flags_response.isError():
                 flag1, flag2 = flags_response.registers
                 
@@ -416,7 +436,16 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     if not words_response.isError():
                         barcode1 = decode_string(words_response.registers)
                         if aio_producer:
-                            await aio_producer.send(KAFKA_TOPIC_BARCODE, value={"barcode": barcode1, "camera": "1", "ts": now})
+                            # ─── UPDATED: include is_auto in your trigger event
+                            await aio_producer.send("trigger_events", {
+                                "barcode":   barcode1,
+                                "camera":    "1",
+                                "ts":        now,
+                                "mode_auto": is_auto,
+                                "machine_id":   os.getenv("MACHINE_ID"),
+                                "operator":     os.getenv("CURRENT_OPERATOR"),    # or however you make the logged‐in user available
+                                "cbs_stream":   CBS_STREAM_NAME
+                            })
                         await client.write_register(BARCODE_FLAG_1, 0)
                         logging.info(f"Barcode 1 ({barcode1}) triggered.")
                     else:
@@ -427,7 +456,15 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     if not words_response.isError():
                         barcode2 = decode_string(words_response.registers)
                         if aio_producer:
-                            await aio_producer.send(KAFKA_TOPIC_BARCODE, value={"barcode": barcode2, "camera": "2", "ts": now})
+                            await aio_producer.send("trigger_events", {
+                                "barcode":   barcode2,
+                                "camera":    "2",
+                                "ts":        now,
+                                "mode_auto": is_auto,
+                                "machine_id":   os.getenv("MACHINE_ID"),
+                                "operator":     os.getenv("CURRENT_OPERATOR"),    # or however you make the logged‐in user available
+                                "cbs_stream":   CBS_STREAM_NAME
+                            })
                         await client.write_register(BARCODE_FLAG_2, 0)
                         print(f"Barcode 2 ({barcode2}) triggered.")
                     else:
