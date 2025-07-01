@@ -14,27 +14,228 @@
             "OP_ENABLE": 2002,
             "START": 2003,
             "STOP": 2004
+
         }
     },
     "manual": {
         "read": {
-            "INPUT_CONVEYOR_MODE_POS": 1100,
-            "CONTROLLER_STATUS": 1101,
-            "PROGRAM_STATUS": 1102,
-            "ACTUAL_POS": 1103,
-            "ACTUAL_SPEED": 1104,
-            "JOG_SPEED": 1105
+            "CONTROLLERSTATUS":{ "address": 1101, "type": "holding", "count": 1 },
+            "ACTUALSPEED": { "address": 1105, "type": "holding", "count": 2 },
+            "CONNECTIONSTATUS": { "address": 1105, "type": "holding", "count": 1 }
+            
         },
         "write": {
             "TARGET_POS": 2100,
-            "TARGET_SPEED": 2101,
+            "TARGET_SPEED": 1111,
+            "JOG_SPEED": 1107,
             "HOME": 2102,
-            "INITIALIZE": 2103,
-            "JOG_FORWARD": 2104,
-            "JOG_REVERSE": 2105,
-            "OP_ENABLE": 2106,
+            "INITIALIZE": [
+                1130,
+                1
+            ],
+            "JOG_FORWARD": [
+                1130,
+                3
+            ],
+            "JOG_REVERSE": 1130,
+            "OP_ENABLE": [
+                1130,
+                2
+            ],
             "START": 2107,
-            "STOP": 2108
+            "STOP": 2108,
+            "HOME1": [
+                1130,
+                0
+            ],
+            "OPENABLE": [
+                1130,
+                2
+            ],
+            "JOGFORWARD": [
+                1130,
+                3
+            ],
+            "JOGREVERSE": [
+                1130,
+                4
+            ],
+            "START1": [
+                1130,
+                5
+            ],
+            "STOP1": [
+                1130,
+                6
+            ],
+            "HOME2": [
+                1170,
+                0
+            ],
+            "INITIALIZE1": [
+                1170,
+                1
+            ],
+            "OPENABLE1": [
+                1170,
+                2
+            ],
+            "JOGFORWARD1": [
+                1170,
+                3
+            ],
+            "JOGREVERSE1": [
+                1170,
+                4
+            ],
+            "START2": [
+                1170,
+                5
+            ],
+            "STOP2": [
+                1170,
+                6
+            ],
+            "HOME3": [
+                1210,
+                0
+            ],
+            "INITIALIZE2": [
+                1210,
+                1
+            ],
+            "OPENABLE2": [
+                1210,
+                2
+            ],
+            "JOGFORWARD2": [
+                1210,
+                3
+            ],
+            "JOGREVERSE2": [
+                1210,
+                4
+            ],
+            "START3": [
+                1210,
+                5
+            ],
+            "STOP3": [
+                1210,
+                6
+            ],
+            "HOME4": [
+                1250,
+                0
+            ],
+            "INITIALIZE3": [
+                1250,
+                1
+            ],
+            "OPENABLE3": [
+                1250,
+                2
+            ],
+            "JOGFORWARD3": [
+                1250,
+                3
+            ],
+            "JOGREVERSE3": [
+                1250,
+                4
+            ],
+            "START4": [
+                1250,
+                5
+            ],
+            "STOP4": [
+                1250,
+                6
+            ],
+            "HOME5": [
+                1290,
+                0
+            ],
+            "INITIALIZE4": [
+                1290,
+                1
+            ],
+            "OPENABLE4": [
+                1290,
+                2
+            ],
+            "JOGFORWARD4": [
+                1290,
+                3
+            ],
+            "JOGREVERSE4": [
+                1290,
+                4
+            ],
+            "START5": [
+                1290,
+                5
+            ],
+            "STOP5": [
+                1290,
+                6
+            ],
+            "HOME6": [
+                1330,
+                0
+            ],
+            "INITIALIZE5": [
+                1330,
+                1
+            ],
+            "OPENABLE5": [
+                1330,
+                2
+            ],
+            "JOGFORWARD5": [
+                1330,
+                3
+            ],
+            "JOGREVERSE5": [
+                1330,
+                4
+            ],
+            "START6": [
+                1330,
+                5
+            ],
+            "STOP6": [
+                1330,
+                6
+            ],
+            "HOME7": [
+                1370,
+                0
+            ],
+            "INITIALIZE6": [
+                1370,
+                1
+            ],
+            "OPENABLE6": [
+                1370,
+                2
+            ],
+            "JOGFORWARD6": [
+                1370,
+                3
+            ],
+            "JOGREVERSE6": [
+                1370,
+                4
+            ],
+            "START7": [
+                1370,
+                5
+            ],
+            "STOP7": [
+                1370,
+                6
+            ]
         }
     },
     "auto": {
@@ -59,74 +260,275 @@
     },
     "io": {
         "read": {
-          "STARTPB-MAINCONTROLUNIT": { "address": 1000, "type": "coil" },
-            "STOPPB-MAINCONTROLUNIT": { "address": 1001, "type": "coil" },
-            "HOLDPB-MAINCONTROLUNIT": { "address": 1002, "type": "coil" },
-            "RESTARTPB-MAINCONTROLUNIT": { "address": 1003, "type": "coil" },
-            "EMERGENCYPB-MAINCONTROLUNIT": { "address": 1004, "type": "coil" },
-            "STARTPB-INPUTCONVEYOR": { "address": 1005, "type": "coil" },
-            "EMERGENCYPB-INPUTCONVEYOR": { "address": 1006, "type": "coil" },
-            "AIRPRESSURESWITCH": { "address": 1007, "type": "coil" },
-            "PARTPRESENTATROBOTGRIPPER-1(VACUUMFEEDBACK)": { "address": 1016, "type": "coil" },
-            "PARTPRESENTATROBOTGRIPPER-2(VACUUMFEEDBACK)": { "address": 1017, "type": "coil" },
-            "ROBOTGRIPPER-1UP/DWNCYLUPSIDEREEDSWITCH": { "address": 1018, "type": "coil" },
-            "ROBOTGRIPPER-1UP/DWNCLYDWNSIDEREEDSWITCH": { "address": 1019, "type": "coil" },
-            "ROBOTGRIPPER-2UP/DWNCYLUPSIDEREEDSWITCH": { "address": 1020, "type": "coil" },
-            "ROBOTGRIPPER-2UP/DWNCLYDWNSIDEREEDSWITCH": { "address": 1021, "type": "coil" },
-            "PARTPRESENTATROBOPICK-INPUTCONVEYOR": { "address": 1022, "type": "coil" },
-            "PARTPRESNTATCONVEYOREND-INPUTCONVEYOR": { "address": 1023, "type": "coil" },
-            "FIXTURE1(VACUUMFEEDBACK)1": { "address": 1032, "type": "coil" },
-            "FIXTURE1(VACUUMFEEDBACK)2": { "address": 1033, "type": "coil" },
-            "FIXTURE1PARTPRESENT-1": { "address": 1034, "type": "coil" },
-            "FIXTURE1PARTPRESENT-2": { "address": 1035, "type": "coil" },
-            "FIXTURE1PARTPRESENT-3": { "address": 1036, "type": "coil" },
-            "FIXTURE1PARTPRESENT-4": { "address": 1037, "type": "coil" },
-            "FIXTURE2(VACUUMFEEDBACK)1": { "address": 1038, "type": "coil" },
-            "FIXTURE2(VACUUMFEEDBACK)2": { "address": 1039, "type": "coil" },
-            "FIXTURE2PARTPRESENT-1": { "address": 1040, "type": "coil" },
-            "FIXTURE2PARTPRESENT-2": { "address": 1041, "type": "coil" },
-            "FIXTURE2PARTPRESENT-3": { "address": 1042, "type": "coil" },
-            "FIXTURE2PARTPRESENT-4": { "address": 1043, "type": "coil" },
-            "GANTRY1VACUUMFEEDBACK1": { "address": 1048, "type": "coil" },
-            "GANTRY1VACUUMFEEDBACK2": { "address": 1049, "type": "coil" },
-            "GANTRY1PARTPRESENT1": { "address": 1050, "type": "coil" },
-            "GANTRY1PARTPRESENT2": { "address": 1051, "type": "coil" },
-            "GANTRY1ROTARYCYL1ADVANCEREEDSWITCH": { "address": 1052, "type": "coil" },
-            "GANTRY1ROTARYCYL1RETRACTREEDSWITCH": { "address": 1053, "type": "coil" },
-            "GANTRY1ROTARYCYL2ADVANCEREEDSWITCH": { "address": 1054, "type": "coil" },
-            "GANTRY1ROTARYCYL2RETRACTREEDSWITCH": { "address": 1055, "type": "coil" },
-            "GANTRY1TOYOFWDLIMITSWITCH": { "address": 1056, "type": "coil" },
-            "GANTRY1TOYOREVLIMITSWITCH": { "address": 1057, "type": "coil" },
-            "GANTRY2VACUUMFEEDBACK1": { "address": 1064, "type": "coil" },
-            "GANTRY2VACUUMFEEDBACK2": { "address": 1065, "type": "coil" },
-            "GANTRY2PARTPRESENT1": { "address": 1066, "type": "coil" },
-            "GANTRY2PARTPRESENT2": { "address": 1067, "type": "coil" },
-            "GANTRY2ROTARYCYL1ADVANCEREEDSWITCH": { "address": 1068, "type": "coil" },
-            "GANTRY2ROTARYCYL1RETRACTREEDSWITCH": { "address": 1069, "type": "coil" },
-            "GANTRY2ROTARYCYL2ADVANCEREEDSWITCH": { "address": 1070, "type": "coil" },
-            "GANTRY2ROTARYCYL2RETRACTREEDSWITCH": { "address": 1071, "type": "coil" },
-            "GANTRY2TOYOFWDLIMITSWITCH": { "address": 1072, "type": "coil" },
-            "GANTRY2TOYOREVLIMITSWITCH": { "address": 1073, "type": "coil" },
-            "SAFETYDOOR-1": { "address": 1080, "type": "coil" },
-            "SAFETYDOOR-2": { "address": 1081, "type": "coil" },
-            "SAFETYDOOR-3": { "address": 1082, "type": "coil" },
-            "SAFETYDOOR-4": { "address": 1083, "type": "coil" },
-            "SAFETYDOOR-5": { "address": 1084, "type": "coil" },
-            "SAFETYDOOR-6": { "address": 1085, "type": "coil" },
-            "SAFETYDOOR-7": { "address": 1086, "type": "coil" },
-            "SAFETYDOOR-8": { "address": 1087, "type": "coil" },
-            "SAFETYDOOR-9": { "address": 1088, "type": "coil" },
-            "SAFETYDOOR-10": { "address": 1089, "type": "coil" },
-            "SAFETYDOOR-11": { "address": 1090, "type": "coil" },
-            "SAFETYDOOR-12": { "address": 1091, "type": "coil" },
-            "SAFETYDOOR-13": { "address": 1092, "type": "coil" },
-            "SAFETYDOOR-14": { "address": 1093, "type": "coil" },
-            "SAFETYDOOR-15": { "address": 1094, "type": "coil" },
-            "SAFETYDOOR-16": { "address": 1095, "type": "coil" },
-            "EMERGENCYPB-OUTPUTCONVEYOR": { "address": 1096, "type": "coil" },
-            "UNLOADINGAREASENSOR-OUTPUTCONVEYOR": { "address": 1097, "type": "coil" },
-            "GANTRYLOADINGAREASENSOR-OUTPUTCONVEYOR": { "address": 1098, "type": "coil" }
+            "STARTPB-MAINCONTROLUNIT": {
+                "address": 1000,
+                "type": "coil"
+            },
+            "STOPPB-MAINCONTROLUNIT": {
+                "address": 1001,
+                "type": "coil"
+            },
+            "HOLDPB-MAINCONTROLUNIT": {
+                "address": 1002,
+                "type": "coil"
+            },
+            "RESTARTPB-MAINCONTROLUNIT": {
+                "address": 1003,
+                "type": "coil"
+            },
+            "EMERGENCYPB-MAINCONTROLUNIT": {
+                "address": 1004,
+                "type": "coil"
+            },
+            "STARTPB-INPUTCONVEYOR": {
+                "address": 1005,
+                "type": "coil"
+            },
+            "EMERGENCYPB-INPUTCONVEYOR": {
+                "address": 1006,
+                "type": "coil"
+            },
+            "AIRPRESSURESWITCH": {
+                "address": 1007,
+                "type": "coil"
+            },
+            "PARTPRESENTATROBOTGRIPPER-1(VACUUMFEEDBACK)": {
+                "address": 1016,
+                "type": "coil"
+            },
+            "PARTPRESENTATROBOTGRIPPER-2(VACUUMFEEDBACK)": {
+                "address": 1017,
+                "type": "coil"
+            },
+            "ROBOTGRIPPER-1UP/DWNCYLUPSIDEREEDSWITCH": {
+                "address": 1018,
+                "type": "coil"
+            },
+            "ROBOTGRIPPER-1UP/DWNCLYDWNSIDEREEDSWITCH": {
+                "address": 1019,
+                "type": "coil"
+            },
+            "ROBOTGRIPPER-2UP/DWNCYLUPSIDEREEDSWITCH": {
+                "address": 1020,
+                "type": "coil"
+            },
+            "ROBOTGRIPPER-2UP/DWNCLYDWNSIDEREEDSWITCH": {
+                "address": 1021,
+                "type": "coil"
+            },
+            "PARTPRESENTATROBOPICK-INPUTCONVEYOR": {
+                "address": 1022,
+                "type": "coil"
+            },
+            "PARTPRESNTATCONVEYOREND-INPUTCONVEYOR": {
+                "address": 1023,
+                "type": "coil"
+            },
+            "FIXTURE1(VACUUMFEEDBACK)1": {
+                "address": 1032,
+                "type": "coil"
+            },
+            "FIXTURE1(VACUUMFEEDBACK)2": {
+                "address": 1033,
+                "type": "coil"
+            },
+            "FIXTURE1PARTPRESENT-1": {
+                "address": 1034,
+                "type": "coil"
+            },
+            "FIXTURE1PARTPRESENT-2": {
+                "address": 1035,
+                "type": "coil"
+            },
+            "FIXTURE1PARTPRESENT-3": {
+                "address": 1036,
+                "type": "coil"
+            },
+            "FIXTURE1PARTPRESENT-4": {
+                "address": 1037,
+                "type": "coil"
+            },
+            "FIXTURE2(VACUUMFEEDBACK)1": {
+                "address": 1038,
+                "type": "coil"
+            },
+            "FIXTURE2(VACUUMFEEDBACK)2": {
+                "address": 1039,
+                "type": "coil"
+            },
+            "FIXTURE2PARTPRESENT-1": {
+                "address": 1040,
+                "type": "coil"
+            },
+            "FIXTURE2PARTPRESENT-2": {
+                "address": 1041,
+                "type": "coil"
+            },
+            "FIXTURE2PARTPRESENT-3": {
+                "address": 1042,
+                "type": "coil"
+            },
+            "FIXTURE2PARTPRESENT-4": {
+                "address": 1043,
+                "type": "coil"
+            },
+            "GANTRY1VACUUMFEEDBACK1": {
+                "address": 1048,
+                "type": "coil"
+            },
+            "GANTRY1VACUUMFEEDBACK2": {
+                "address": 1049,
+                "type": "coil"
+            },
+            "GANTRY1PARTPRESENT1": {
+                "address": 1050,
+                "type": "coil"
+            },
+            "GANTRY1PARTPRESENT2": {
+                "address": 1051,
+                "type": "coil"
+            },
+            "GANTRY1ROTARYCYL1ADVANCEREEDSWITCH": {
+                "address": 1052,
+                "type": "coil"
+            },
+            "GANTRY1ROTARYCYL1RETRACTREEDSWITCH": {
+                "address": 1053,
+                "type": "coil"
+            },
+            "GANTRY1ROTARYCYL2ADVANCEREEDSWITCH": {
+                "address": 1054,
+                "type": "coil"
+            },
+            "GANTRY1ROTARYCYL2RETRACTREEDSWITCH": {
+                "address": 1055,
+                "type": "coil"
+            },
+            "GANTRY1TOYOFWDLIMITSWITCH": {
+                "address": 1056,
+                "type": "coil"
+            },
+            "GANTRY1TOYOREVLIMITSWITCH": {
+                "address": 1057,
+                "type": "coil"
+            },
+            "GANTRY2VACUUMFEEDBACK1": {
+                "address": 1064,
+                "type": "coil"
+            },
+            "GANTRY2VACUUMFEEDBACK2": {
+                "address": 1065,
+                "type": "coil"
+            },
+            "GANTRY2PARTPRESENT1": {
+                "address": 1066,
+                "type": "coil"
+            },
+            "GANTRY2PARTPRESENT2": {
+                "address": 1067,
+                "type": "coil"
+            },
+            "GANTRY2ROTARYCYL1ADVANCEREEDSWITCH": {
+                "address": 1068,
+                "type": "coil"
+            },
+            "GANTRY2ROTARYCYL1RETRACTREEDSWITCH": {
+                "address": 1069,
+                "type": "coil"
+            },
+            "GANTRY2ROTARYCYL2ADVANCEREEDSWITCH": {
+                "address": 1070,
+                "type": "coil"
+            },
+            "GANTRY2ROTARYCYL2RETRACTREEDSWITCH": {
+                "address": 1071,
+                "type": "coil"
+            },
+            "GANTRY2TOYOFWDLIMITSWITCH": {
+                "address": 1072,
+                "type": "coil"
+            },
+            "GANTRY2TOYOREVLIMITSWITCH": {
+                "address": 1073,
+                "type": "coil"
+            },
+            "SAFETYDOOR-1": {
+                "address": 1080,
+                "type": "coil"
+            },
+            "SAFETYDOOR-2": {
+                "address": 1081,
+                "type": "coil"
+            },
+            "SAFETYDOOR-3": {
+                "address": 1082,
+                "type": "coil"
+            },
+            "SAFETYDOOR-4": {
+                "address": 1083,
+                "type": "coil"
+            },
+            "SAFETYDOOR-5": {
+                "address": 1084,
+                "type": "coil"
+            },
+            "SAFETYDOOR-6": {
+                "address": 1085,
+                "type": "coil"
+            },
+            "SAFETYDOOR-7": {
+                "address": 1086,
+                "type": "coil"
+            },
+            "SAFETYDOOR-8": {
+                "address": 1087,
+                "type": "coil"
+            },
+            "SAFETYDOOR-9": {
+                "address": 1088,
+                "type": "coil"
+            },
+            "SAFETYDOOR-10": {
+                "address": 1089,
+                "type": "coil"
+            },
+            "SAFETYDOOR-11": {
+                "address": 1090,
+                "type": "coil"
+            },
+            "SAFETYDOOR-12": {
+                "address": 1091,
+                "type": "coil"
+            },
+            "SAFETYDOOR-13": {
+                "address": 1092,
+                "type": "coil"
+            },
+            "SAFETYDOOR-14": {
+                "address": 1093,
+                "type": "coil"
+            },
+            "SAFETYDOOR-15": {
+                "address": 1094,
+                "type": "coil"
+            },
+            "SAFETYDOOR-16": {
+                "address": 1095,
+                "type": "coil"
+            },
+            "EMERGENCYPB-OUTPUTCONVEYOR": {
+                "address": 1096,
+                "type": "coil"
+            },
+            "UNLOADINGAREASENSOR-OUTPUTCONVEYOR": {
+                "address": 1097,
+                "type": "coil"
+            },
+            "GANTRYLOADINGAREASENSOR-OUTPUTCONVEYOR": {
+                "address": 1098,
+                "type": "coil"
             }
+        }
     },
     "robo": {
         "read": {
@@ -151,35 +553,538 @@
             "PALLET1TARGETSPEED2": 1071
         },
         "write": {
-            "ABORTPROGRAM1": [1010,0],
-            "HOMEPROGRAM1": [1010,1],
-            "MAINPROGRAM1": [1010,2],
-            "INITIALIZEPROGRAM1": [1010,3],
-            "PAUSEPROGRAM1": [1010,4],
-            "ERRORACKNOWLEDGE1": [1010,5],
-            "CONTINUEPROGRAM1": [1010,6],
-            "STARTPROGRAM1": [1010,7],
-            "PALLET1HOME1": [1050,0],
-            "PALLET1INITIALIZE1": [1050,1],
-            "PALLET1OPENABLE1": [1050,2],
-            "PALLET1JOGFORWARD1": [1050,3],
-            "PALLET1JOGREVERSE1": [1050,4],
-            "PALLET1START1": [1050,5],
-            "PALLET1STOP1": [1050,6],
-            "ERRORACKNOWLEDGE2": [1050,7],
-            "PALLET1HOME2": [1090,0],
-            "PALLET1INITIALIZE2": [1090,1],
-            "PALLET1OPENENABLE2": [1090,2],
-            "PALLET1JOGFORWARD2": [1090,3],
-            "PALLET1JOGREVERSE2": [1090,4],
-            "PALLET1START2": [1090,5],
-            "PALLET1STOP2": [1090,6],
-            "ERRORACKNOWLEDGE3": [1090,7]
+            "ABORTPROGRAM1": [
+                1010,
+                0
+            ],
+            "HOMEPROGRAM1": [
+                1010,
+                1
+            ],
+            "MAINPROGRAM1": [
+                1010,
+                2
+            ],
+            "INITIALIZEPROGRAM1": [
+                1010,
+                3
+            ],
+            "PAUSEPROGRAM1": [
+                1010,
+                4
+            ],
+            "ERRORACKNOWLEDGE1": [
+                1010,
+                5
+            ],
+            "CONTINUEPROGRAM1": [
+                1010,
+                6
+            ],
+            "STARTPROGRAM1": [
+                1010,
+                7
+            ],
+            "PALLET1HOME1": [
+                1050,
+                0
+            ],
+            "PALLET1INITIALIZE1": [
+                1050,
+                1
+            ],
+            "PALLET1OPENABLE1": [
+                1050,
+                2
+            ],
+            "PALLET1JOGFORWARD1": [
+                1050,
+                3
+            ],
+            "PALLET1JOGREVERSE1": [
+                1050,
+                4
+            ],
+            "PALLET1START1": [
+                1050,
+                5
+            ],
+            "PALLET1STOP1": [
+                1050,
+                6
+            ],
+            "ERRORACKNOWLEDGE2": [
+                1050,
+                7
+            ],
+            "PALLET1HOME2": [
+                1090,
+                0
+            ],
+            "PALLET1INITIALIZE2": [
+                1090,
+                1
+            ],
+            "PALLET1OPENENABLE2": [
+                1090,
+                2
+            ],
+            "PALLET1JOGFORWARD2": [
+                1090,
+                3
+            ],
+            "PALLET1JOGREVERSE2": [
+                1090,
+                4
+            ],
+            "PALLET1START2": [
+                1090,
+                5
+            ],
+            "PALLET1STOP2": [
+                1090,
+                6
+            ],
+            "ERRORACKNOWLEDGE3": [
+                1090,
+                7
+            ],
+            "HMI-PALLET-1-FIXTURE-1-PIN-CYLINDERS-SEL": [
+                1500,
+                0
+            ],
+            "HMI-PALLET-1-FIXTURE-1-PIN-CYLINDERS-ADVANCE": [
+                1500,
+                1
+            ],
+            "HMI-PALLET-1-FIXTURE-1-PIN-CYLINDERS-RETRACT": [
+                1500,
+                2
+            ],
+            "HMI-PALLET-1-FIXTURE-1-VACUUM-SEL": [
+                1500,
+                3
+            ],
+            "HMI-PALLET-1-FIXTURE-1-VACUUM-ON": [
+                1500,
+                4
+            ],
+            "HMI-PALLET-1-FIXTURE-1-VACUUM-OFF": [
+                1500,
+                5
+            ],
+            "HMI-PALLET-1-FIXTURE-1-BLOWER-SEL": [
+                1500,
+                6
+            ],
+            "HMI-PALLET-1-FIXTURE-1-BLOWER-ON": [
+                1500,
+                7
+            ],
+            "HMI-PALLET-1-FIXTURE-1-BLOWER-OFF": [
+                1500,
+                8
+            ],
+            "HMI-PALLET-1-FIXTURE-2-PIN-CYLINDERS-SEL": [
+                1500,
+                9
+            ],
+            "HMI-PALLET-1-FIXTURE-2-PIN-CYLINDERS-ADVANCE": [
+                1500,
+                10
+            ],
+            "HMI-PALLET-1-FIXTURE-2-PIN-CYLINDERS-RETRACT": [
+                1500,
+                11
+            ],
+            "HMI-PALLET-1-FIXTURE-2-VACUUM-SEL": [
+                1500,
+                12
+            ],
+            "HMI-PALLET-1-FIXTURE-2-VACUUM-ON": [
+                1500,
+                13
+            ],
+            "HMI-PALLET-1-FIXTURE-2-VACUUM-OFF": [
+                1500,
+                14
+            ],
+            "HMI-PALLET-1-FIXTURE-2-BLOWER-SEL": [
+                1500,
+                15
+            ],
+            "HMI-PALLET-1-FIXTURE-2-BLOWER-ON": [
+                1501,
+                0
+            ],
+            "HMI-PALLET-1-FIXTURE-2-BLOWER-OFF": [
+                1501,
+                1
+            ],
+            "HMI-PALLET-2-FIXTURE-1-PIN-CYLINDERS-SEL": [
+                1501,
+                2
+            ],
+            "HMI-PALLET-2-FIXTURE-1-PIN-CYLINDERS-ADVANCE": [
+                1501,
+                3
+            ],
+            "HMI-PALLET-2-FIXTURE-1-PIN-CYLINDERS-RETRACT": [
+                1501,
+                4
+            ],
+            "HMI-PALLET-2-FIXTURE-1-VACUUM-SEL": [
+                1501,
+                5
+            ],
+            "HMI-PALLET-2-FIXTURE-1-VACUUM-ON": [
+                1501,
+                6
+            ],
+            "HMI-PALLET-2-FIXTURE-1-VACUUM-OFF": [
+                1501,
+                7
+            ],
+            "HMI-PALLET-2-FIXTURE-1-BLOWER-SEL": [
+                1501,
+                8
+            ],
+            "HMI-PALLET-2-FIXTURE-1-BLOWER-ON": [
+                1501,
+                9
+            ],
+            "HMI-PALLET-2-FIXTURE-1-BLOWER-OFF": [
+                1501,
+                10
+            ],
+            "HMI-PALLET-2-FIXTURE-2-PIN-CYLINDERS-SEL": [
+                1501,
+                11
+            ],
+            "HMI-PALLET-2-FIXTURE-2-PIN-CYLINDERS-ADVANCE": [
+                1501,
+                12
+            ],
+            "HMI-PALLET-2-FIXTURE-2-PIN-CYLINDERS-RETRACT": [
+                1501,
+                13
+            ],
+            "HMI-PALLET-2-FIXTURE-2-VACUUM-SEL": [
+                1501,
+                14
+            ],
+            "HMI-PALLET-2-FIXTURE-2-VACUUM-ON": [
+                1501,
+                15
+            ],
+            "HMI-PALLET-2-FIXTURE-2-VACUUM-OFF": [
+                1502,
+                0
+            ],
+            "HMI-PALLET-2-FIXTURE-2-BLOWER-SEL": [
+                1502,
+                1
+            ],
+            "HMI-PALLET-2-FIXTURE-2-BLOWER-ON": [
+                1502,
+                2
+            ],
+            "HMI-PALLET-2-FIXTURE-2-BLOWER-OFF": [
+                1502,
+                3
+            ],
+            "HMI-GANTRY-1-ROTARY-CYL-1-SEL": [
+                1510,
+                0
+            ],
+            "HMI-GANTRY-1-ROTARY-CYL-1-DWN": [
+                1510,
+                1
+            ],
+            "HMI-GANTRY-1-ROTARY-CYL-1-RETRACT": [
+                1510,
+                2
+            ],
+            "HMI-GANTRY-1-ROTARY-CYL-2-SEL": [
+                1510,
+                3
+            ],
+            "HMI-GANTRY-1-ROTARY-CYL-2-DWN": [
+                1510,
+                4
+            ],
+            "HMI-GANTRY-1-ROTARY-CYL-2-RETRACT": [
+                1510,
+                5
+            ],
+            "HMI-GANTRY-1-VACUUM-1-SEL": [
+                1510,
+                6
+            ],
+            "HMI-GANTRY-1-VACUUM-1-ON": [
+                1510,
+                7
+            ],
+            "HMI-GANTRY-1-VACUUM-1-OFF": [
+                1510,
+                8
+            ],
+            "HMI-GANTRY-1-BLOWER-1-SEL": [
+                1510,
+                9
+            ],
+            "HMI-GANTRY-1-BLOWER-1-ON": [
+                1510,
+                10
+            ],
+            "HMI-GANTRY-1-BLOWER-1-OFF": [
+                1510,
+                11
+            ],
+            "HMI-GANTRY-1-VACUUM-2-SEL": [
+                1510,
+                12
+            ],
+            "HMI-GANTRY-1-VACUUM-2-ON": [
+                1510,
+                13
+            ],
+            "HMI-GANTRY-1-VACUUM-2-OFF": [
+                1510,
+                14
+            ],
+            "HMI-GANTRY-1-BLOWER-2-SEL": [
+                1510,
+                15
+            ],
+            "HMI-GANTRY-1-BLOWER-2-ON": [
+                1511,
+                0
+            ],
+            "HMI-GANTRY-1-BLOWER-2-OFF": [
+                1511,
+                1
+            ],
+            "HMI-GANTRY-2-ROTARY-CYL-1-SEL": [
+                1520,
+                0
+            ],
+            "HMI-GANTRY-2-ROTARY-CYL-1-DWN": [
+                1520,
+                1
+            ],
+            "HMI-GANTRY-2-ROTARY-CYL-1-RETRACT": [
+                1520,
+                2
+            ],
+            "HMI-GANTRY-2-ROTARY-CYL-2-SEL": [
+                1520,
+                3
+            ],
+            "HMI-GANTRY-2-ROTARY-CYL-2-DWN": [
+                1520,
+                4
+            ],
+            "HMI-GANTRY-2-ROTARY-CYL-2-RETRACT": [
+                1520,
+                5
+            ],
+            "HMI-GANTRY-2-UP/DWN-CYL-1-SEL": [
+                1520,
+                6
+            ],
+            "HMI-GANTRY-2-UP/DWN-CYL-1-DWN": [
+                1520,
+                7
+            ],
+            "HMI-GANTRY-2-UP/DWN-CYL-1-UP": [
+                1520,
+                8
+            ],
+            "HMI-GANTRY-2-UP/DWN-CYL-2-SEL": [
+                1520,
+                9
+            ],
+            "HMI-GANTRY-2-UP/DWN-CYL-2-DWN": [
+                1520,
+                10
+            ],
+            "HMI-GANTRY-2-UP/DWN-CYL-2-UP": [
+                1520,
+                11
+            ],
+            "HMI-GANTRY-2-VACUUM-1-SEL": [
+                1520,
+                12
+            ],
+            "HMI-GANTRY-2-VACUUM-1-ON": [
+                1520,
+                13
+            ],
+            "HMI-GANTRY-2-VACUUM-1-OFF": [
+                1520,
+                14
+            ],
+            "HMI-GANTRY-2-BLOWER-1-SEL": [
+                1520,
+                15
+            ],
+            "HMI-GANTRY-2-BLOWER-1-ON": [
+                1521,
+                0
+            ],
+            "HMI-GANTRY-2-BLOWER-1-OFF": [
+                1521,
+                1
+            ],
+            "HMI-GANTRY-2-VACUUM-2-SEL": [
+                1521,
+                2
+            ],
+            "HMI-GANTRY-2-VACUUM-2-ON": [
+                1521,
+                3
+            ],
+            "HMI-GANTRY-2-VACUUM-2-OFF": [
+                1521,
+                4
+            ],
+            "HMI-GANTRY-2-BLOWER-2-SEL": [
+                1521,
+                5
+            ],
+            "HMI-GANTRY-2-BLOWER-2-ON": [
+                1521,
+                6
+            ],
+            "HMI-GANTRY-2-BLOWER-2-OFF": [
+                1521,
+                7
+            ],
+            "HMI-ROBOT-UP/DWN-CYL-1-SEL": [
+                1530,
+                0
+            ],
+            "HMI-ROBOT-UP/DWN-CYL-1-DWN": [
+                1530,
+                1
+            ],
+            "HMI-ROBOT-UP/DWN-CYL-1-UP": [
+                1530,
+                2
+            ],
+            "HMI-ROBOT-UP/DWN-CYL-2-SEL": [
+                1530,
+                3
+            ],
+            "HMI-ROBOT-UP/DWN-CYL-2-DWN": [
+                1530,
+                4
+            ],
+            "HMI-ROBOT-UP/DWN-CYL-2-UP": [
+                1530,
+                5
+            ],
+            "HMI-ROBOT-VACUUM-1-SEL": [
+                1530,
+                6
+            ],
+            "HMI-ROBOT-VACUUM-1-ON": [
+                1530,
+                7
+            ],
+            "HMI-ROBOT-VACUUM-1-OFF": [
+                1530,
+                8
+            ],
+            "HMI-ROBOT-BLOWER-1-SEL": [
+                1530,
+                9
+            ],
+            "HMI-ROBOT-BLOWER-1-ON": [
+                1530,
+                10
+            ],
+            "HMI-ROBOT-BLOWER-1-OFF": [
+                1530,
+                11
+            ],
+            "HMI-ROBOT-VACUUM-2-SEL": [
+                1530,
+                12
+            ],
+            "HMI-ROBOT-VACUUM-2-ON": [
+                1530,
+                13
+            ],
+            "HMI-ROBOT-VACUUM-2-OFF": [
+                1530,
+                14
+            ],
+            "HMI-ROBOT-BLOWER-2-SEL": [
+                1530,
+                15
+            ],
+            "HMI-ROBOT-BLOWER-2-ON": [
+                1531,
+                0
+            ],
+            "HMI-ROBOT-BLOWER-2-OFF": [
+                1531,
+                1
+            ],
+            "HMI-VISION-SYSTEM-STAGE-1-TRIGGER": [
+                1540,
+                0
+            ],
+            "HMI-VISION-SYSTEM-STAGE-1-RESULT-OK": [
+                1540,
+                1
+            ],
+            "HMI-VISION-SYSTEM-STAGE-1-RESULT-NOK": [
+                1540,
+                2
+            ],
+            "HMI-VISION-SYSTEM-STAGE-1-RESET": [
+                1540,
+                3
+            ],
+            "HMI-VISION-SYSTEM-STAGE-2-TRIGGER": [
+                1550,
+                0
+            ],
+            "HMI-VISION-SYSTEM-STAGE-2-RESULT-OK": [
+                1550,
+                1
+            ],
+            "HMI-VISION-SYSTEM-STAGE-2-RESULT-NOK": [
+                1550,
+                2
+            ],
+            "HMI-VISION-SYSTEM-STAGE-2-RESET": [
+                1550,
+                3
+            ],
+            "HMI-VISION-SYSTEM-STAGE-3-TRIGGER": [
+                1560,
+                0
+            ],
+            "HMI-VISION-SYSTEM-STAGE-3-RESULT-OK": [
+                1560,
+                1
+            ],
+            "HMI-VISION-SYSTEM-STAGE-3-RESULT-NOK": [
+                1560,
+                2
+            ],
+            "HMI-VISION-SYSTEM-STAGE-3-RESET": [
+                1560,
+                3
+            ]
         }
     },
     "oee": {
         "read": {
-            
             "MACHINE_STATUS_RUN": 4700,
             "MACHINE_STATUS_IDLE": 4701,
             "MACHINE_STATUS_STOPPED": 4702,
@@ -187,28 +1092,25 @@
             "MACHINE_STATUS_MAINTENANCE_MODE": 4704,
             "MACHINE_AVAILABILITY_STATUS": 4705,
             "MACHINE_PLANNED_DOWNTIME_STATUS": 4706,
-            "CYCLE_START_STOP_FLAG": 4707, 
-            "ALARM_MESSAGE_STRING": [4708, 10],
-            "ACTUAL_CYCLE_TIME_MS": 4718, 
-            "TARGET_CYCLE_TIME_MS": 4719, 
+            "CYCLE_START_STOP_FLAG": 4707,
+            "ALARM_MESSAGE_STRING": [
+                4708,
+                10
+            ],
+            "ACTUAL_CYCLE_TIME_MS": 4718,
+            "TARGET_CYCLE_TIME_MS": 4719,
             "OK_PARTS_COUNT_TOTAL": 4720,
             "NOK_PARTS_COUNT_TOTAL": 4721,
             "TOTAL_PART_COUNT_GLOBAL": 4722,
             "SHIFT_A_OK_PARTS_COUNT": 4723,
             "SHIFT_A_NOK_PARTS_COUNT": 4724,
             "SHIFT_A_TOTAL_PART_COUNT": 4725,
-
-
             "SHIFT_B_OK_PARTS_COUNT": 4726,
             "SHIFT_B_NOK_PARTS_COUNT": 4727,
             "SHIFT_B_TOTAL_PART_COUNT": 4728,
-
-
             "SHIFT_C_OK_PARTS_COUNT": 4729,
             "SHIFT_C_NOK_PARTS_COUNT": 4730,
             "SHIFT_C_TOTAL_PART_COUNT": 4731
         }
     }
-
-    
 }
