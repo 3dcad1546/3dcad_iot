@@ -39,10 +39,10 @@ services:
     ports:
       - "8001:8001"
       
-  # demo_user_login:
+  # user_login:
   #   build: 
-  #     context: ./services/demo_user_login
-  #   container_name: demo_user_login
+  #     context: ./services/user_login
+  #   container_name: user_login
   #   environment:
   #     DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
   #   ports:
@@ -201,15 +201,6 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: EdgeOrg
       DOCKER_INFLUXDB_INIT_BUCKET: EdgeBucket
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: edgetoken
-
-  # demo_user_login:
-  #   build:
-  #     context: ./services/demo_user_login
-  #   container_name: demo_user_login
-  #   ports:
-  #     - "8002:8001"
-
-
 
 volumes:
   pgdata:
