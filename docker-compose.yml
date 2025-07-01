@@ -61,7 +61,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # USER_SVC_URL : http://demo_user_login:8001
+      # USER_SVC_URL : http://user_login:8001
       USER_SVC_URL: http://demo_user_login:8001
       DB_URL: postgresql://user:password@postgres:5432/edgedb
       INFLUXDB_URL: http://influxdb:8086

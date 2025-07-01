@@ -1,45 +1,44 @@
-import os
+import os, uuid
 import asyncio
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header
 from pydantic import BaseModel
 from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
-# ─── Allowed demo users (override via env if you like) ─────────────
+
+# ─── Allowed demo users ───────────────────────────────────────────────────────
 OPERATOR_IDS = os.getenv("OPERATOR_IDS", "op1,op2,op3").split(",")
 ADMIN_IDS    = os.getenv("ADMIN_IDS",   "admin").split(",")
 ENGINEER_IDS = os.getenv("ENGINEER_IDS","eng").split(",")
 
-# ─── In-memory session state ────────────────────────────────────────
-_current_user = None
-_current_role = None
+# ─── In-memory session store: token → (username, role) ─────────────────────────
+session_store: dict[str, dict[str,str]] = {}
 
-# ─── FastAPI setup ────────────────────────────────────────────────
+# ─── FastAPI setup ───────────────────────────────────────────────────────────
 app = FastAPI()
-
-
 app.add_middleware(
   CORSMiddleware,
-  allow_origins=["*"],  # or ["*"] for a quick demo
+  allow_origins=["*"],
   allow_methods=["*"],
   allow_headers=["*"],
   allow_credentials=True,
 )
+
 class LoginRequest(BaseModel):
     Username: str
     Password: str
 
 class LogoutRequest(BaseModel):
-    Username: str
+    Token: str
 
-def require_login():
-    """Raise if nobody is logged in."""
-    if _current_user is None:
-        raise HTTPException(401, "Not logged in")
+def require_token(token: str = Header(None, alias="X-Auth-Token")):
+    if not token or token not in session_store:
+        raise HTTPException(401, "Invalid or missing auth token")
+    return session_store[token]  # returns {"username":..., "role":...}
 
+# ─── Login ───────────────────────────────────────────────────────────────────
 @app.post("/api/login")
 async def login(req: LoginRequest):
-    global _current_user, _current_role
-    # simple demo check: user must appear in one of the lists
+    # 1) determine role
     if req.Username in ADMIN_IDS:
         role = "admin"
     elif req.Username in ENGINEER_IDS:
@@ -49,49 +48,52 @@ async def login(req: LoginRequest):
     else:
         raise HTTPException(403, "User not permitted")
 
-    # *in a real app you’d check req.Password!* here we accept any password
-    _current_user = req.Username
-    _current_role = role
-
-    # notify any WS listeners
-    await ws_mgr.broadcast({
-        "event":     "login",
-        "username":  _current_user,
-        "role":      _current_role,
-        "timestamp": datetime.utcnow().isoformat()+"Z"
-    })
-
-    return {
-        "message":   "Login successful",
-        "username":  _current_user,
-        "role":      _current_role
+    # 2) (demo) accept any password, issue token
+    token = str(uuid.uuid4())
+    session_store[token] = {
+        "username": req.Username,
+        "role":     role
     }
 
+    # 3) broadcast to any WS listeners
+    await ws_mgr.broadcast({
+        "event":    "login",
+        "username": req.Username,
+        "role":     role,
+        "ts":       datetime.utcnow().isoformat() + "Z"
+    })
+
+    # 4) return token + info
+    return {
+        "message":  "Login successful",
+        "token":    token,
+        "username": req.Username,
+        "role":     role
+    }
+
+# ─── Logout ──────────────────────────────────────────────────────────────────
 @app.post("/api/logout")
 async def logout(req: LogoutRequest):
-    global _current_user, _current_role
-    if req.Username != _current_user:
-        raise HTTPException(400, "Not logged in or wrong user")
+    info = session_store.pop(req.Token, None)
+    if not info:
+        raise HTTPException(401, "Invalid or expired token")
 
-    # capture for WS
-    user = _current_user
-
-    _current_user = None
-    _current_role = None
-
+    # broadcast
     await ws_mgr.broadcast({
-        "event":     "logout",
-        "username":  user,
-        "timestamp": datetime.utcnow().isoformat()+"Z"
+        "event":    "logout",
+        "username": info["username"],
+        "ts":       datetime.utcnow().isoformat() + "Z"
     })
-    return {"message": "Logged out"}
 
+    return {"message":"Logged out"}
+
+# ─── Verify ──────────────────────────────────────────────────────────────────
 @app.get("/api/verify")
-def verify():
-    require_login()
-    return {"username": _current_user, "role": _current_role}
+def verify(sess=Depends(require_token)):
+    # simply echo back
+    return {"username": sess["username"], "role": sess["role"]}
 
-# ─── WebSocket for login status updates ─────────────────────────────
+# ─── WebSocket manager ───────────────────────────────────────────────────────
 class ConnectionManager:
     def __init__(self):
         self.clients: set[WebSocket] = set()
@@ -120,7 +122,7 @@ async def ws_login_status(ws: WebSocket):
     await ws_mgr.connect(ws)
     try:
         while True:
-            # keep the connection alive; we don't expect incoming messages
+            # we don't expect incoming messages, just keep alive
             await ws.receive_text()
     except WebSocketDisconnect:
         ws_mgr.disconnect(ws)
