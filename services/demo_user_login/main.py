@@ -1,6 +1,6 @@
 import os, uuid
 import asyncio
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends
 from pydantic import BaseModel
 from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
