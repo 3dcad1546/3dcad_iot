@@ -124,11 +124,12 @@ async def on_startup():
 # ── Helper: Determine current shift ────────────────────────────────
 def get_current_shift():
     now = datetime.now().time()
-    cur.execute("SELECT id,name,start_time,end_time FROM shift_master;")
+    cur.execute("SELECT id, name, start_time, end_time FROM shift_master;")
     for sid,name,st,et in cur.fetchall():
         if st < et and st <= now < et or (st > et and (now >= st or now < et)):
             return sid,name,st,et
     return None, None, None, None
+    
 
 # ── 5) Auto-logout at shift end ─────────────────────────────────────
 async def shift_end_watcher():

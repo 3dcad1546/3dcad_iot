@@ -29,7 +29,8 @@ services:
       timeout: 5s
       retries: 10
   user_login:
-    build: ./user_login
+    build: 
+      context: ./services/user_login
     container_name: user_login
     environment:
       - DB_URL=postgresql://edge:edgepass@postgres:5432/edgedb
