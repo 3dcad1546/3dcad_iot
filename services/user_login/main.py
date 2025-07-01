@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, time as dtime
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Header, status
 from pydantic import BaseModel
 from aiokafka import AIOKafkaProducer
-from pymodbus.client.async_tcp import AsyncModbusTcpClient
+# from pymodbus.client.async_tcp import AsyncModbusTcpClient
+from pymodbus.client.tcp import AsyncModbusTcpClient
+import time
 OPERATOR_IDS = os.getenv("OPERATOR_IDS","").split(",")
 ADMIN_IDS    = os.getenv("ADMIN_IDS","").split(",")
 ENGINEER_IDS = os.getenv("ENGINEER_IDS","").split(",")

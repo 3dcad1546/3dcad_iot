@@ -33,7 +33,7 @@ services:
       context: ./services/user_login
     container_name: user_login
     environment:
-      - DB_URL=postgresql://edge:edgepass@postgres:5432/edgedb
+      DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
     ports:
       - "8001:8001"
     depends_on:
@@ -41,6 +41,8 @@ services:
         condition: service_healthy
       kafka: 
         condition: service_healthy
+    env_file:
+      - ./.env
   dashboard-api:
     build:
       context: ./services/dashboard_api
@@ -49,7 +51,7 @@ services:
       - "8000:8000"
     environment:
       USER_SVC_URL : http://user_login:8001
-      DB_URL: postgres://user:password@postgres:5432/edgedb
+      DB_URL: postgresql://user:password@postgres:5432/edgedb
       INFLUXDB_URL: http://influxdb:8086
       INFLUXDB_TOKEN: edgetoken
       INFLUXDB_ORG: EdgeOrg
@@ -66,7 +68,8 @@ services:
         condition: service_started
       user_login:
         condition: service_started
-
+    env_file:
+      - ./.env
   polling-service:
     build:
       context: ./services/polling_service
@@ -79,12 +82,14 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-
+    env_file:
+      - ./.env
   processing-service:
     build:
       context: ./services/processing_service
     container_name: processing_service
     environment:
+      MACHINE_ID: MyActualMachine123
       KAFKA_BROKER: kafka:9092
       RAW_KAFKA_TOPIC: raw_server_data
       TRIGGER_KAFKA_TOPIC: trigger_events
@@ -92,12 +97,14 @@ services:
       MES_PROCESS_CONTROL_URL: http://mes-server/api/pc
       TRACE_PROXY_HOST: trace-proxy:8765
       DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
-
+      # MACHINE_ID: ${MACHINE_ID}
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    env_file:
+      - ./.env
 
   trigger-service:
     build:
@@ -111,6 +118,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    env_file:
+      - ./.env
   machine-interface:
     build: 
       context: ./services/machine_interface
@@ -125,7 +134,8 @@ services:
         condition: service_healthy
       user_login:
         condition: service_started
-
+    env_file:
+      - ./.env
 
   oee_influx_writer:
     build:
@@ -143,7 +153,8 @@ services:
         condition: service_healthy
       influxdb:
         condition: service_started
-
+    env_file:
+      - ./.env
 
   postgres:
     image: postgres:15
@@ -159,7 +170,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./services/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user"]
+      test: ["CMD-SHELL", "pg_isready -U edge -d edgedb"]
       interval: 5s
       timeout: 5s
       retries: 10

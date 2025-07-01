@@ -44,14 +44,14 @@ CREATE TABLE IF NOT EXISTS mes_trace_history (
 """)
 
 def load_machine_config(machine_id: str):
-    config_cur.execute("""
+    pg_cur.execute("""
       SELECT mes_process_control_url AS pc_url,
              mes_upload_url      AS upload_url,
              is_mes_enabled
       FROM machine_config
       WHERE machine_id = %s
     """, (machine_id,))
-    row = config_cur.fetchone()
+    row = pg_cur.fetchone()
     if not row:
         raise RuntimeError(f"No machine_config for {machine_id}")
     return row

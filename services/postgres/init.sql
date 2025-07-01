@@ -41,7 +41,25 @@ CREATE TABLE IF NOT EXISTS machine_config (
   is_trace_enabled          BOOLEAN  NOT NULL DEFAULT TRUE
 );
 
-
+INSERT INTO machine_config (
+    machine_id,
+    mes_process_control_url,
+    mes_upload_url,
+    trace_process_control_url,
+    trace_interlock_url,
+    is_mes_enabled,
+    is_trace_enabled
+)
+VALUES (
+    'MyActualMachine123',                                      -- must match your MACHINE_ID
+    'http://mes-server/api/pc',                                -- your MES PC URL
+    'http://mes-server/api/upload',                            -- your MES Upload URL
+    'http://trace-proxy:8765/v2/process_control',              -- Trace PC URL
+    'http://trace-proxy:8765/interlock',                       -- Trace Interlock URL
+    TRUE,                                                      -- enable MES calls
+    TRUE                                                       -- enable Trace calls
+)
+ON CONFLICT (machine_id) DO NOTHING;
 -- 3) Shift master + seeds
 CREATE TABLE IF NOT EXISTS shift_master (
   id          SERIAL   PRIMARY KEY,
