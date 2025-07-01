@@ -103,73 +103,81 @@ async def shutdown():
     print("[Processing] Postgres connection closed.")
 
 # ─── Business logic stub ─────────────────────────────────────────
+import uuid, requests
+
 def process_event(topic: str, msg: dict) -> dict:
-    """
-    If we got a trigger_events message, and mode_auto==True,
-    call MES PC, Trace PC, Trace Interlock sequentially,
-    collect success/failure into three bits, then emit.
-    """
     if topic != TRIGGER_TOPIC:
-        return {"emit": False}
+        return {"emit":False}
 
-    barcode   = msg.get("barcode")
-    is_auto   = msg.get("mode_auto", False)
-    result    = {"Trace":0, "Process":0, "MES":0}
+    barcode = msg["barcode"]
+    is_auto = msg.get("mode_auto", False)
+    result  = {"Trace":0,"Process":0,"MES":0}
 
-    if not is_auto:
-        # manual mode → do nothing, bits remain zero
-        return {"emit": True, "command":{
-            "section": "status_bits",
-            "tags":    result
+    # 1) Who’s logged in?
+    pg_cur.execute("""
+      SELECT username,shift_id FROM sessions
+       WHERE logout_ts IS NULL AND role='operator'
+    ORDER BY login_ts DESC LIMIT 1
+    """)
+    row = pg_cur.fetchone()
+    operator = row["username"] if row else None
+
+    # 2) Get machine_config
+    pg_cur.execute("""
+      SELECT mes_process_control_url,mes_upload_url,
+             trace_process_control_url,trace_interlock_url,
+             is_mes_enabled,is_trace_enabled
+        FROM machine_config WHERE machine_id=%s
+    """, (os.getenv("MACHINE_ID"),))
+    cfg = pg_cur.fetchone()
+
+    # If manual mode, just write zeros
+    if not is_auto or operator is None:
+        return {"emit":True,"command":{
+          "section":"status_bits","tags":result,
+          "request_id":str(uuid.uuid4())
         }}
 
-    # 1) MES PC
-    if is_auto and machine_cfg["is_mes_enabled"]:
-        try:
-            machine = msg.get("machine_id") or os.getenv("MACHINE_ID")
-            operator= msg.get("operator")   or os.getenv("DEFAULT_OPERATOR")
-            cbs     = msg.get("cbs_stream") or os.getenv("CBS_STREAM_NAME")
+    # 3) MES PC
+    if cfg["is_mes_enabled"]:
+      try:
+        r = requests.post(cfg["mes_process_control_url"],json={
+          "UniqueId":   barcode,
+          "MachineId":  os.getenv("MACHINE_ID"),
+          "OperatorId": operator,
+          "Tools":[], "RawMaterials":[],
+          "CbsStreamName": os.getenv("CBS_STREAM","")
+        },timeout=5)
+        if r.status_code==200 and r.json().get("IsSuccessful"):
+          result["MES"]=1
+      except: pass
 
-            r = requests.post(machine_cfg["pc_url"], json={
-                "UniqueId":     barcode,
-                "MachineId":    machine,
-                "OperatorId":   operator,
-                "Tools":        [], "RawMaterials": [],
-                "CbsStreamName":cbs
-            }, timeout=5)
-
-            if r.status_code==200 and r.json().get("IsSuccessful"):
-                result["MES"] = 1
-        except Exception:
-            result["MES"] = 0
-
-    # 2) Trace Process Control
-    try:
-        r = requests.get(f"http://{TRACE_PROXY}/v2/process_control",
-                        params={"serial": barcode, "serial_type":"band"}, timeout=3)
+    # 4) Trace PC
+    if cfg["is_trace_enabled"]:
+      try:
+        r = requests.get(cfg["trace_process_control_url"],
+                         params={"serial":barcode,"serial_type":"band"},
+                         timeout=3)
         if r.status_code==200 and r.json().get("pass"):
-            result["Process"] = 1
-    except Exception:
-        result["Process"] = 0
+          result["Process"]=1
+      except: pass
 
-    # 3) Trace Interlock
-    try:
-        r = requests.post(f"http://{TRACE_PROXY}/interlock",
-                         params={"serial": barcode, "serial_type":"band"}, timeout=3)
+    # 5) Trace Interlock
+      try:
+        r = requests.post(cfg["trace_interlock_url"],
+                          params={"serial":barcode,"serial_type":"band"},
+                          timeout=3)
         if r.status_code==200 and r.json().get("pass"):
-            result["Trace"] = 1
-    except Exception:
-        result["Trace"] = 0
+          result["Trace"]=1
+      except: pass
 
-    # return a PLC‐write command on “status_bits”
-    return {
-      "emit":   True,
-      "command":{
-        "section": "status_bits",
-        "tags":    result,
-        "request_id": str(uuid.uuid4())
-      }
-    }
+    # 6) return PLC write cmd
+    return {"emit":True,"command":{
+      "section":"status_bits",
+      "tags":result,
+      "request_id":str(uuid.uuid4())
+    }}
+
 
 
 # ─── Main loop ───────────────────────────────────────────────────
