@@ -28,21 +28,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-  user_login:
-    build: 
-      context: ./services/user_login
-    container_name: user_login
+  demo_user_login:
+    build:
+      context: ./services/demo_user_login
+    container_name: demo_user_login
     environment:
-      DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
+      - OPERATOR_IDS=op1,op2,op3
+      - ADMIN_IDS=admin
+      - ENGINEER_IDS=eng
     ports:
       - "8001:8001"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka: 
-        condition: service_healthy
-    env_file:
-      - ./.env
+      
+  # demo_user_login:
+  #   build: 
+  #     context: ./services/demo_user_login
+  #   container_name: demo_user_login
+  #   environment:
+  #     DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
+  #   ports:
+  #     - "8001:8001"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     kafka: 
+  #       condition: service_healthy
+  #   env_file:
+  #     - ./.env
   dashboard-api:
     build:
       context: ./services/dashboard_api
@@ -50,7 +61,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      USER_SVC_URL : http://user_login:8001
+      # USER_SVC_URL : http://demo_user_login:8001
+      USER_SVC_URL: http://demo_user_login:8001
       DB_URL: postgresql://user:password@postgres:5432/edgedb
       INFLUXDB_URL: http://influxdb:8086
       INFLUXDB_TOKEN: edgetoken
@@ -66,7 +78,7 @@ services:
         condition: service_healthy
       machine-interface:
         condition: service_started
-      user_login:
+      demo_user_login:
         condition: service_started
     env_file:
       - ./.env
@@ -132,7 +144,7 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-      user_login:
+      demo_user_login:
         condition: service_started
     env_file:
       - ./.env
@@ -189,6 +201,14 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: EdgeOrg
       DOCKER_INFLUXDB_INIT_BUCKET: EdgeBucket
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: edgetoken
+
+  # demo_user_login:
+  #   build:
+  #     context: ./services/demo_user_login
+  #   container_name: demo_user_login
+  #   ports:
+  #     - "8002:8001"
+
 
 
 volumes:
