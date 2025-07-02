@@ -523,7 +523,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 status_set_2 = {STATUS_BITS[i]: int(bitfield2[i]) for i in range(min(len(STATUS_BITS), len(bitfield2)))}
 
                 bc1_response = await client.read_holding_registers(address= 2000, count=16)
-                bc2_response = await client.read_holding_registers(address= 3116, count=16)
+                bc2_response = await client.read_holding_registers(address= 2200, count=16)
                 bc3_response = await client.read_holding_registers(address= 3132, count=16)
                 bc4_response = await client.read_holding_registers(address= 3148, count=16)
 
