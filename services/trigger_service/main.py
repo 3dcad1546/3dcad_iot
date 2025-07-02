@@ -4,7 +4,6 @@ import asyncio
 import json
 import time
 import signal
-
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from aiokafka import AIOKafkaProducer
