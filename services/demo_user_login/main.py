@@ -2,7 +2,7 @@ import os, uuid
 import asyncio
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime,time
 from fastapi.middleware.cors import CORSMiddleware
 
 # ─── Allowed demo users ───────────────────────────────────────────────────────
@@ -22,6 +22,17 @@ app.add_middleware(
   allow_headers=["*"],
   allow_credentials=True,
 )
+
+def get_current_shift():
+    """Return current shift name with start/end strings."""
+    now = datetime.now().time()
+    if time(6, 0) <= now < time(14, 0):
+        return {"name": "Shift A", "start": "06:00", "end": "14:00"}
+    elif time(14, 0) <= now < time(22, 0):
+        return {"name": "Shift B", "start": "14:00", "end": "22:00"}
+    else:
+        return {"name": "Shift C", "start": "22:00", "end": "06:00"}
+
 
 class LoginRequest(BaseModel):
     Username: str
@@ -65,10 +76,11 @@ async def login(req: LoginRequest):
 
     # 4) return token + info
     return {
-        "message":  "Login successful",
+        
         "token":    token,
         "username": req.Username,
-        "role":     role
+        "role":     role,
+        "shift":    get_current_shift()
     }
 
 # ─── Logout ──────────────────────────────────────────────────────────────────
