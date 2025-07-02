@@ -110,6 +110,8 @@ services:
       TRACE_PROXY_HOST: trace-proxy:8765
       DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
       # MACHINE_ID: ${MACHINE_ID}
+      USER_LOGIN_URL: http://demo_user_login:8001
+
     depends_on:
       kafka:
         condition: service_healthy

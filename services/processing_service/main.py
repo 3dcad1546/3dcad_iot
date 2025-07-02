@@ -103,9 +103,17 @@ async def shutdown():
     print("[Processing] Postgres connection closed.")
 
 # ─── Business logic stub ─────────────────────────────────────────
-import uuid, requests
+import uuid, requests,httpx
 
-def process_event(topic: str, msg: dict) -> dict:
+async def get_current_operator():
+    url = f"{os.getenv('USER_LOGIN_URL')}/api/current_operator"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url, timeout=2.0)
+        r.raise_for_status()
+        body = r.json()
+        return body.get("username")
+
+async def process_event(topic: str, msg: dict) -> dict:
     if topic != TRIGGER_TOPIC:
         return {"emit":False}
 
@@ -114,13 +122,14 @@ def process_event(topic: str, msg: dict) -> dict:
     result  = {"Trace":0,"Process":0,"MES":0}
 
     # 1) Who’s logged in?
-    pg_cur.execute("""
-      SELECT username,shift_id FROM sessions
-       WHERE logout_ts IS NULL AND role='operator'
-    ORDER BY login_ts DESC LIMIT 1
-    """)
-    row = pg_cur.fetchone()
-    operator = row["username"] if row else None
+    # pg_cur.execute("""
+    #   SELECT username,shift_id FROM sessions
+    #    WHERE logout_ts IS NULL AND role='operator'
+    # ORDER BY login_ts DESC LIMIT 1
+    # """)
+    # row = pg_cur.fetchone()
+    # operator = row["username"] if row else None
+    operator = await get_current_operator()
 
     # 2) Get machine_config
     pg_cur.execute("""
@@ -131,10 +140,12 @@ def process_event(topic: str, msg: dict) -> dict:
     """, (os.getenv("MACHINE_ID"),))
     cfg = pg_cur.fetchone()
 
-    # If manual mode, just write zeros
+     # Manual mode: emit a “manual” section write, leave other bits untouched
     if not is_auto or operator is None:
         return {"emit":True,"command":{
-          "section":"status_bits","tags":result,
+          "section":"manual",        
+          "tag_name":  "ManualMode",
+          "value":     1,
           "request_id":str(uuid.uuid4())
         }}
 
@@ -197,7 +208,7 @@ async def run():
             )
 
             # 2) Business logic
-            decision = process_event(topic, payload)
+            decision = await process_event(topic, payload)
             if decision.get("emit"):
                 cmd = decision["command"]
 

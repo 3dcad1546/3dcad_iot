@@ -461,6 +461,11 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 is_auto = False
             else:
                 is_auto = (mode_rr.registers[0] == 1)
+                if aio_producer:
+                    await aio_producer.send(KAFKA_TOPIC_MANUAL_STATUS, {
+                    "mode_auto": is_auto,
+                    "ts": now
+                    })
 
             if not flags_response.isError():
                 flag1, flag2 = flags_response.registers

@@ -182,6 +182,20 @@ def require_login(token: str = Header(None, alias="X-Auth-Token")):
         raise HTTPException(401, "Invalid or expired session")
     return resp.json()["username"]
 
+async def websocket_auth(websocket: WebSocket, token: str = Query(..., alias="X-Auth-Token")):
+    """
+    Authenticates a WebSocket connection using a token from query parameters.
+    """
+    if not token:
+        raise HTTPException(401, "Missing auth token in query parameter")
+
+    # Call the user_login service to verify this token/session.
+    # Must return the operator username on success.
+    resp = requests.get(f"{USER_SVC_URL}/api/verify", headers={"X-Auth-Token": token}, timeout=3)
+    if resp.status_code != 200:
+        raise HTTPException(401, "Invalid or expired session")
+    return resp.json()["username"]
+
 # ─── Config API ─────────────────────────────────────────────────────
 @app.post("/api/config")
 def update_config(
@@ -646,8 +660,7 @@ async def listen_for_plc_write_responses():
             print(f"[Response Listener] Kafka response consumer stopped.")
 
 @app.websocket("/ws/plc-write")
-async def plc_write_ws(ws: WebSocket,token: str = Header(None, alias="X-Auth-Token")):
-    operator = require_login(token)
+async def plc_write_ws(ws: WebSocket,operator: str = Depends(websocket_auth)):
     await mgr.connect("plc-write-responses", ws)  # CORRECT
     try:
         while True:
@@ -673,15 +686,20 @@ async def plc_write_ws(ws: WebSocket,token: str = Header(None, alias="X-Auth-Tok
 
 
 @app.websocket("/ws/{stream}")
-async def ws_endpoint(stream: str, ws: WebSocket,token: str = Header(None, alias="X-Auth-Token")):
-    operator = require_login(token)
+async def ws_endpoint(stream: str, ws: WebSocket,operator: str = Depends(websocket_auth)):
+    print(f"WS stream '{stream}' connected by operator: {operator}")
     if stream not in WS_TOPICS:
-        await ws.close(code=1008)
+        print(f"Attempted to connect to unknown stream: {stream}")
+        await ws.close(code=1008, reason="Invalid stream name")
         return
     await mgr.connect(stream, ws)
     try:
         while True:
             await ws.receive_text()  # Ignore input; server-push only
     except WebSocketDisconnect:
+        print(f"WS stream '{stream}' disconnected for operator: {operator}")
         mgr.disconnect(stream, ws)
+    except Exception as e:
+        print(f"Unexpected error in ws_endpoint: {e}")
+        await ws.close(code=1011) # Internal Error
 

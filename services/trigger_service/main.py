@@ -2,8 +2,8 @@ import os
 import json
 import time
 import asyncio
-import paho.mqtt.client as mqtt
-from kafka import KafkaProducer
+from aiokafka import AIOKafkaProducer
+from asyncio_mqtt import Client as AsyncMQTTClient
 import psycopg2
 
 # ─── Environment Variables ─────────────────────────────────────────────
@@ -58,13 +58,15 @@ def on_message(client, userdata, msg):
         print("Error processing trigger:", e)
 
 # ─── Main ──────────────────────────────────────────────────────────────
-def main():
-    client = mqtt.Client()
-    client.on_connect = on_connect
-    client.on_message = on_message
-
-    client.connect(MQTT_BROKER, 1883, 60)
-    client.loop_forever()
-
+async def main():
+    prod = AIOKafkaProducer(bootstrap_servers=KAFKA_BROKER, ...)
+    await prod.start()
+    async with AsyncMQTTClient(MQTT_BROKER) as mqtt:
+        async with mqtt.messages() as messages:
+            await mqtt.subscribe(MQTT_TOPIC)
+            async for msg in messages:
+                payload = json.loads(msg.payload.decode())
+                await prod.send_and_wait(TRIGGER_KAFKA_TOPIC, {..., "ts":time_str})
+                cur.execute("INSERT ...", ...)
 if __name__ == "__main__":
     main()
