@@ -182,16 +182,19 @@ def require_login(token: str = Header(None, alias="X-Auth-Token")):
         raise HTTPException(401, "Invalid or expired session")
     return resp.json()["username"]
 
-async def websocket_auth(websocket: WebSocket, token: str = Query(..., alias="X-Auth-Token")):
-    """
-    Authenticates a WebSocket connection using a token from query parameters.
-    """
+async def websocket_auth(
+    websocket: WebSocket,
+    token: str = Query(None),                                      # look in ?token=
+    auth_header: str = Header(None, alias="X-Auth-Token")          # or X-Auth-Token: header
+):
+    token = token or auth_header
     if not token:
-        raise HTTPException(401, "Missing auth token in query parameter")
-
-    # Call the user_login service to verify this token/session.
-    # Must return the operator username on success.
-    resp = requests.get(f"{USER_SVC_URL}/api/verify", headers={"X-Auth-Token": token}, timeout=3)
+        raise HTTPException(401, "Missing auth token")
+    resp = requests.get(
+        f"{USER_SVC_URL}/api/verify", 
+        headers={"X-Auth-Token": token}, 
+        timeout=3
+    )
     if resp.status_code != 200:
         raise HTTPException(401, "Invalid or expired session")
     return resp.json()["username"]
