@@ -1,8 +1,4 @@
-import os
-import json
-import time
-import asyncio
-import logging
+import os,json,time,asyncio,logging,requests
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
 from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
@@ -12,11 +8,22 @@ from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafka
 
 logger = logging.getLogger("machine_interface")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# ─── Toggle Simulation Mode ─────────────────────────────────────
+USE_SIMULATOR = os.getenv("USE_SIMULATOR", "false").lower() in ("1", "true", "yes")
+
+# module‐scope
+current_token: str = None
+
+# in your WS code, on login event:
+async def handle_ws_login_event(msg):
+    global current_token
+    if msg["event"] == "login":
+        current_token = msg["token"]   # assuming your payload includes token
 
 # ─── Configuration ─────────────────────────────────────────────────────
 PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
 PLC_PORT = int(os.getenv("PLC_PORT", "502"))
-
+LOGIN_TOPIC = os.getenv("LOGIN_TOPIC", "login_status")
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
 print("KAFKA_BROKER =", repr(KAFKA_BROKER), "| Type:", type(KAFKA_BROKER))
 KAFKA_TOPIC_BARCODE = os.getenv("BARCODE_TOPIC", "trigger_events")
@@ -41,6 +48,7 @@ BARCODE_FLAG_1 = 3303
 BARCODE_FLAG_2 = 3304
 BARCODE_1_BLOCK = (3100, 16)
 BARCODE_2_BLOCK = (3132, 16)
+LOGIN_REGISTER   = 3309 
 
 # Mode 1 → Auto and 0 → Manual
 MODE_REGISTER    = int(os.getenv("MODE_REGISTER", "3310"))
@@ -369,40 +377,6 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
             print(f"[WRITE ERROR] {e}")
             break
 
-# ─── For without decimal address────── 
-
-    # for name, val in tags.items():
-    #     addr_config = section_data.get("write", {}).get(name)
-    #     if addr_config is not None:
-    #         if isinstance(addr_config, list):
-    #             addr = addr_config[0]
-    #         else:
-    #             addr = addr_config
-
-    #         try:
-    #             rr = await client.write_register(addr, int(val))
-    #             if rr.isError():
-    #                 all_writes_successful = False
-    #                 print(f"Error writing tag '{name}' to address {addr}: {rr}")
-    #                 response_payload["message"] = f"Failed to write tag '{name}': {rr}"
-    #             else:
-    #                 print(f"Successfully wrote {val} to '{name}' at {addr}")
-    #         except ModbusException as e:
-    #             all_writes_successful = False
-    #             response_payload["message"] = f"ModbusException writing tag '{name}' to address {addr}: {e}"
-    #             print(response_payload["message"])
-    #             break
-    #         except Exception as e:
-    #             all_writes_successful = False
-    #             response_payload["message"] = f"Exception writing tag '{name}' to address {addr}: {e}"
-    #             print(response_payload["message"])
-    #             break
-    #     else:
-    #         all_writes_successful = False
-    #         response_payload["message"] = f"Warning: Tag '{name}' not found in write section for '{section}'"
-    #         print(response_payload["message"])
-    #         break
-
     if all_writes_successful:
         response_payload["status"] = "SUCCESS"
         response_payload["message"] = "All tags written successfully."
@@ -478,11 +452,12 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                             # ─── UPDATED: include is_auto in your trigger event
                             await aio_producer.send("trigger_events", {
                                 "barcode":   barcode1,
+                                "token": os.getenv("CURRENT_TOKEN"),
                                 "camera":    "1",
                                 "ts":        now,
                                 "mode_auto": is_auto,
                                 "machine_id":   os.getenv("MACHINE_ID"),
-                                "operator":     os.getenv("CURRENT_OPERATOR"),    # or however you make the logged‐in user available
+                                "operator":     current_token,    
                                 "cbs_stream":   CBS_STREAM_NAME
                             })
                         await client.write_register(BARCODE_FLAG_1, 0)
@@ -690,8 +665,39 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
         if consumer:
             await consumer.stop()
             print("AIOKafkaConsumer for write commands stopped.")
-# ─── Toggle Simulation Mode ─────────────────────────────────────
-USE_SIMULATOR = os.getenv("USE_SIMULATOR", "false").lower() in ("1", "true", "yes")
+
+
+
+# ─── Login status ──────────────────────────────────────────────────────────────
+
+async def listen_for_login_status(client: AsyncModbusTcpClient):
+    """
+    Consume login_status from Kafka and write to PLC register 3309:
+      status=1 → user logged in
+      status=0 → auto‐logout
+      status=2 → manual logout
+    """
+    consumer = AIOKafkaConsumer(
+        LOGIN_TOPIC,
+        bootstrap_servers=KAFKA_BROKER,
+        group_id="login-status-listener",
+        value_deserializer=lambda b: json.loads(b.decode("utf-8"))
+    )
+    await consumer.start()
+    print(f"[LoginListener] consuming topic {LOGIN_TOPIC}")
+    try:
+        async for msg in consumer:
+            payload = msg.value
+            status  = int(payload.get("status", 0))
+            print(f"[LoginListener] got status={status}, writing to PLC reg {LOGIN_REGISTER}")
+            # write_register returns a Deferred—await it
+            wr = await client.write_register(LOGIN_REGISTER, status)
+            if wr.isError():
+                print(f"[LoginListener] Write error: {wr}")
+    finally:
+        await consumer.stop()
+        print("[LoginListener] stopped")
+
 
 # ─── Main ──────────────────────────────────────────────────────────────
 async def main():
@@ -715,6 +721,10 @@ async def main():
 
     try:
         await init_aiokafka_producer()
+
+        if not USE_SIMULATOR:
+            # client is your AsyncModbusTcpClient instance
+            asyncio.create_task(listen_for_login_status(client))
 
         if USE_SIMULATOR:
             # fire up simulators instead of real PLC loops

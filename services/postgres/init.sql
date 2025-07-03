@@ -135,3 +135,16 @@ CREATE TABLE IF NOT EXISTS error_logs (
   details   JSONB,
   ts        TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- 10) Local users for admin & engineer
+CREATE TABLE IF NOT EXISTS users (
+  username      TEXT       PRIMARY KEY,
+  password_hash TEXT       NOT NULL,
+  role          user_role  NOT NULL
+);
+
+-- Example: insert a hard-coded admin & engineer; in prod you’ll manage these records via your own UI
+INSERT INTO users (username, password_hash, role) VALUES
+  ('admin1', '$2b$12$KIX/OKIXlh1pGi1H/abc00abc1234567890abcdefghiJklmnopqr', 'admin'),
+  ('eng1',   '$2b$12$7dT/7dTxyzXYZxyzXYZabc1234567890abcdefghiJklmnopqrs', 'engineer')
+ON CONFLICT (username) DO NOTHING;
