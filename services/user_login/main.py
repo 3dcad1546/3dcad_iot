@@ -1,11 +1,16 @@
 import os, uuid, asyncio, json, time as pytime, requests
 from datetime import datetime, timedelta, time as dtime
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, status
-from pydantic import BaseModel, validator
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, status,APIRouter, Depends
+from pydantic import BaseModel, validator, constr, Field
 import psycopg2
 from aiokafka import AIOKafkaProducer
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from passlib.hash import bcrypt
+from typing import List
+
+
+# Router for CRUD operations
+router = APIRouter(prefix="/api", tags=["CRUD"])
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.verify(plain, hashed)
@@ -71,9 +76,287 @@ async def init_kafka():
         value_serializer=lambda v: json.dumps(v).encode()
     )
     await producer.start()
+# ─── Pydantic Schemas ─────────────────────────────────────────────────────────────
+class MachineConfig(BaseModel):
+    machine_id: str
+    mes_process_control_url: str
+    mes_upload_url: str
+    is_mes_enabled: bool = True
+    trace_process_control_url: str
+    trace_interlock_url: str
+    is_trace_enabled: bool = True
+
+class UserCreate(BaseModel):
+    first_name: str
+    last_name: str
+    username: str = Field(...,regex=r"^[a-zA-Z0-9_]+$")
+    password: str
+    role: str = Field(...,regex=r"^(operator|admin|engineer)$")
+
+class UserOut(BaseModel):
+    id: uuid.UUID
+    first_name: str
+    last_name: str
+    username: str
+    role: str
+
+class AccessEntry(BaseModel):
+    role: str = Field(...,regex=r"^(operator|admin|engineer)$")
+    page_name: str
+    can_read: bool = True
+    can_write: bool = False
+
+class MessageEntry(BaseModel):
+    code: str
+    message: str
+
+class PLCTest(BaseModel):
+    param1: bool
+    param2: bool
+    param3: bool
+    param4: bool
+    param5: bool
+    param6: bool
+
+class ShiftIn(BaseModel):
+     name: str
+     start_time: str = Field(..., regex=r'^\d{2}:\d{2}:\d{2}$')  # "HH:MM:SS"
+     end_time:   str = Field(..., regex=r'^\d{2}:\d{2}:\d{2}$')
+
+class ShiftOut(ShiftIn):
+    id: int
+
+
+# ─── CRUD Endpoints ──────────────────────────────────────────────────────────────
+# 1) Machine Config
+@router.post("/machine-config", response_model=MachineConfig)
+def create_machine(cfg: MachineConfig):
+    cur.execute(
+        "INSERT INTO machine_config (machine_id, mes_process_control_url, mes_upload_url, is_mes_enabled, trace_process_control_url, trace_interlock_url, is_trace_enabled) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled",
+        (cfg.machine_id, cfg.mes_process_control_url, cfg.mes_upload_url, cfg.is_mes_enabled, cfg.trace_process_control_url, cfg.trace_interlock_url, cfg.is_trace_enabled)
+    )
+    row = cur.fetchone()
+    return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/machine-config/{machine_id}", response_model=MachineConfig)
+def read_machine(machine_id: str):
+    cur.execute("SELECT machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled FROM machine_config WHERE machine_id=%s", (machine_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Machine not found")
+    return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
+
+@router.put("/machine-config/{machine_id}", response_model=MachineConfig)
+def update_machine(machine_id: str, cfg: MachineConfig):
+    cur.execute(
+        "UPDATE machine_config SET mes_process_control_url=%s,mes_upload_url=%s,is_mes_enabled=%s,trace_process_control_url=%s,trace_interlock_url=%s,is_trace_enabled=%s WHERE machine_id=%s RETURNING machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled",
+        (cfg.mes_process_control_url, cfg.mes_upload_url, cfg.is_mes_enabled, cfg.trace_process_control_url, cfg.trace_interlock_url, cfg.is_trace_enabled, machine_id)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Machine not found")
+    return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/machine-config/{machine_id}")
+def delete_machine(machine_id: str):
+    cur.execute("DELETE FROM machine_config WHERE machine_id=%s RETURNING 1", (machine_id,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Machine not found")
+    return {"ok": True}
+
+# 2) User creation + management
+@router.post("/users", response_model=UserOut)
+def create_user(u: UserCreate):
+    hashed = bcrypt.hash(u.password)
+    user_id = uuid.uuid4()
+    cur.execute(
+        "INSERT INTO users (id, first_name, last_name, username, password_hash, role) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id, first_name, last_name, username, role",
+        (str(user_id), u.first_name, u.last_name, u.username, hashed, u.role)
+    )
+    row = cur.fetchone()
+    return UserOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/users/{username}", response_model=UserOut)
+def read_user(username: str):
+    cur.execute("SELECT id,first_name,last_name,username,role FROM users WHERE username=%s", (username,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return UserOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.put("/users/{username}", response_model=UserOut)
+def update_user(username: str, u: UserCreate):
+    hashed = bcrypt.hash(u.password)
+    cur.execute(
+        "UPDATE users SET first_name=%s,last_name=%s,password_hash=%s,role=%s WHERE username=%s RETURNING id, first_name, last_name, username, role",
+        (u.first_name, u.last_name, hashed, u.role, username)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return UserOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/users/{username}")
+def delete_user(username: str):
+    cur.execute("DELETE FROM users WHERE username=%s RETURNING 1", (username,))
+    if not cur.fetchone():
+        raise HTTPException(404, "User not found")
+    return {"ok": True}
+
+# 3) User access
+@router.post("/access", response_model=AccessEntry)
+def create_access(a: AccessEntry):
+    cur.execute(
+        "INSERT INTO user_access (role,page_name,can_read,can_write) VALUES(%s,%s,%s,%s) RETURNING role,page_name,can_read,can_write",
+        (a.role, a.page_name, a.can_read, a.can_write)
+    )
+    row = cur.fetchone()
+    return AccessEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/access", response_model=list[AccessEntry])
+def list_access():
+    cur.execute("SELECT role,page_name,can_read,can_write FROM user_access")
+    return [AccessEntry(**dict(zip([c.name for c in cur.description], row))) for row in cur.fetchall()]
+
+@router.put("/access/{role}/{page_name}", response_model=AccessEntry)
+def update_access(role: str, page_name: str, a: AccessEntry):
+    cur.execute(
+        "UPDATE user_access SET can_read=%s,can_write=%s WHERE role=%s AND page_name=%s RETURNING role,page_name,can_read,can_write",
+        (a.can_read, a.can_write, role, page_name)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Access entry not found")
+    return AccessEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/access/{role}/{page_name}")
+def delete_access(role: str, page_name: str):
+    cur.execute("DELETE FROM user_access WHERE role=%s AND page_name=%s RETURNING 1", (role, page_name))
+    if not cur.fetchone():
+        raise HTTPException(404, "Access entry not found")
+    return {"ok": True}
+
+# 4) Message master
+@router.post("/messages", response_model=MessageEntry)
+def create_message(m: MessageEntry):
+    cur.execute("INSERT INTO message_master(code,message) VALUES(%s,%s) RETURNING code,message", (m.code, m.message))
+    row = cur.fetchone()
+    return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/messages/{code}", response_model=MessageEntry)
+def read_message(code: str):
+    cur.execute("SELECT code,message FROM message_master WHERE code=%s", (code,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Message not found")
+    return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.put("/messages/{code}", response_model=MessageEntry)
+def update_message(code: str, m: MessageEntry):
+    cur.execute(
+        "UPDATE message_master SET message=%s WHERE code=%s RETURNING code,message",
+        (m.message, code)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Message not found")
+    return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/messages/{code}")
+def delete_message(code: str):
+    cur.execute("DELETE FROM message_master WHERE code=%s RETURNING 1", (code,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Message not found")
+    return {"ok": True}
+
+# 5) PLC Test parameters
+@router.post("/plc-tests", status_code=201)
+def create_plc_test(p: PLCTest):
+    cur.execute(
+        "INSERT INTO plc_test(param1,param2,param3,param4,param5,param6) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id,param1,param2,param3,param4,param5,param6",
+        (p.param1,p.param2,p.param3,p.param4,p.param5,p.param6)
+    )
+    row = cur.fetchone()
+    return dict(zip([c.name for c in cur.description], row))
+
+@router.get("/plc-tests", response_model=list[PLCTest])
+def list_plc_tests():
+    cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test")
+    return [PLCTest(**dict(zip([c.name for c in cur.description], row))) for row in cur.fetchall()]
+
+@router.get("/plc-tests/{test_id}")
+def read_plc_test(test_id: int):
+    cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test WHERE id=%s", (test_id,))
+    row = cur.fetchone()
+
+# 6) Shifts CRUD
+@router.post("/shifts", response_model=ShiftOut, status_code=201)
+def create_shift(s: ShiftIn):
+    cur.execute(
+        """
+        INSERT INTO shift_master(name,start_time,end_time)
+        VALUES (%s, %s::time, %s::time)
+        RETURNING id,name,start_time::text AS start_time,end_time::text AS end_time
+        """,
+        (s.name, s.start_time, s.end_time)
+    )
+    row = cur.fetchone()
+    return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/shifts", response_model=List[ShiftOut])
+def list_shifts():
+    cur.execute("""
+      SELECT id,name,
+             start_time::text AS start_time,
+             end_time::text   AS end_time
+        FROM shift_master
+        ORDER BY id
+    """)
+    return [
+        ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+        for row in cur.fetchall()
+    ]
+
+@router.get("/shifts/{shift_id}", response_model=ShiftOut)
+def read_shift(shift_id: int):
+    cur.execute("""
+      SELECT id,name,
+             start_time::text AS start_time,
+             end_time::text   AS end_time
+        FROM shift_master
+       WHERE id = %s
+    """, (shift_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Shift not found")
+    return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.put("/shifts/{shift_id}", response_model=ShiftOut)
+def update_shift(shift_id: int, s: ShiftIn):
+    cur.execute("""
+      UPDATE shift_master
+         SET name = %s,
+             start_time = %s::time,
+             end_time   = %s::time
+       WHERE id = %s
+    RETURNING id,name,start_time::text AS start_time,end_time::text AS end_time
+    """, (s.name, s.start_time, s.end_time, shift_id))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Shift not found")
+    return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/shifts/{shift_id}", status_code=204)
+def delete_shift(shift_id: int):
+    cur.execute("DELETE FROM shift_master WHERE id = %s RETURNING 1", (shift_id,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Shift not found")
+    return
 
 # ─── FastAPI + WS ────────────────────────────────────────────
 app = FastAPI()
+
 class LoginReq(BaseModel):
     Username: str
     Password: str
@@ -334,3 +617,5 @@ async def protect(request,call_next):
         if not cur.fetchone():
             raise HTTPException(401,"Not logged in")
     return await call_next(request)
+
+app.include_router(router)
