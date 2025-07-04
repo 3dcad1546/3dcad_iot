@@ -163,3 +163,23 @@ CREATE TABLE IF NOT EXISTS plc_test (
   param5  BOOLEAN NOT NULL,
   param6  BOOLEAN NOT NULL
 );
+
+-- 14) Cycle master + per-stage events
+CREATE TABLE IF NOT EXISTS cycle_master (
+  cycle_id      UUID        PRIMARY KEY,
+  operator      TEXT        NOT NULL,
+  variant       TEXT        NOT NULL,
+  barcode       TEXT        NOT NULL,
+  shift_id      INTEGER     NOT NULL REFERENCES shift_master(id),
+  start_ts      TIMESTAMP   NOT NULL DEFAULT NOW(),
+  end_ts        TIMESTAMP,
+  unload_status BOOLEAN     NOT NULL DEFAULT FALSE,
+  unload_ts     TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cycle_event (
+  id          SERIAL      PRIMARY KEY,
+  cycle_id    UUID        NOT NULL REFERENCES cycle_master(cycle_id),
+  stage       TEXT        NOT NULL,
+  ts          TIMESTAMP   NOT NULL DEFAULT NOW()
+);

@@ -109,6 +109,7 @@ services:
       TRACE_PROXY_HOST: trace-proxy:8765
       DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
       USER_LOGIN_URL: http://user_login:8001
+      CYCLE_EVENT_TOPIC: cycle_event
 
     depends_on:
       kafka:
