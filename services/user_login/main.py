@@ -126,10 +126,13 @@ class ShiftIn(BaseModel):
 class ShiftOut(ShiftIn):
     id: int
 
+# ─── FastAPI + WS ────────────────────────────────────────────
+app = FastAPI()
+
 
 # ─── CRUD Endpoints ──────────────────────────────────────────────────────────────
 # 1) Machine Config
-@router.post("/machine-config", response_model=MachineConfig)
+@app.post("/api/machine-config", response_model=MachineConfig)
 def create_machine(cfg: MachineConfig):
     cur.execute(
         "INSERT INTO machine_config (machine_id, mes_process_control_url, mes_upload_url, is_mes_enabled, trace_process_control_url, trace_interlock_url, is_trace_enabled) "
@@ -139,7 +142,7 @@ def create_machine(cfg: MachineConfig):
     row = cur.fetchone()
     return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
 
-@router.get("/machine-config/{machine_id}", response_model=MachineConfig)
+@app.get("/api/machine-config/{machine_id}", response_model=MachineConfig)
 def read_machine(machine_id: str):
     cur.execute("SELECT machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled FROM machine_config WHERE machine_id=%s", (machine_id,))
     row = cur.fetchone()
@@ -147,7 +150,7 @@ def read_machine(machine_id: str):
         raise HTTPException(404, "Machine not found")
     return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
 
-@router.put("/machine-config/{machine_id}", response_model=MachineConfig)
+@app.put("/api/machine-config/{machine_id}", response_model=MachineConfig)
 def update_machine(machine_id: str, cfg: MachineConfig):
     cur.execute(
         "UPDATE machine_config SET mes_process_control_url=%s,mes_upload_url=%s,is_mes_enabled=%s,trace_process_control_url=%s,trace_interlock_url=%s,is_trace_enabled=%s WHERE machine_id=%s RETURNING machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled",
@@ -158,7 +161,7 @@ def update_machine(machine_id: str, cfg: MachineConfig):
         raise HTTPException(404, "Machine not found")
     return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
 
-@router.delete("/machine-config/{machine_id}")
+@app.delete("/api/machine-config/{machine_id}")
 def delete_machine(machine_id: str):
     cur.execute("DELETE FROM machine_config WHERE machine_id=%s RETURNING 1", (machine_id,))
     if not cur.fetchone():
@@ -166,7 +169,7 @@ def delete_machine(machine_id: str):
     return {"ok": True}
 
 # 2) User creation + management
-@router.post("/users", response_model=UserOut)
+@app.post("/api/users", response_model=UserOut)
 def create_user(u: UserCreate):
     hashed = bcrypt.hash(u.password)
     user_id = uuid.uuid4()
@@ -177,7 +180,7 @@ def create_user(u: UserCreate):
     row = cur.fetchone()
     return UserOut(**dict(zip([c.name for c in cur.description], row)))
 
-@router.get("/users/{username}", response_model=UserOut)
+@app.get("/api/users/{username}", response_model=UserOut)
 def read_user(username: str):
     cur.execute("SELECT id,first_name,last_name,username,role FROM users WHERE username=%s", (username,))
     row = cur.fetchone()
@@ -185,7 +188,7 @@ def read_user(username: str):
         raise HTTPException(404, "User not found")
     return UserOut(**dict(zip([c.name for c in cur.description], row)))
 
-@router.put("/users/{username}", response_model=UserOut)
+@app.put("/api/users/{username}", response_model=UserOut)
 def update_user(username: str, u: UserCreate):
     hashed = bcrypt.hash(u.password)
     cur.execute(
@@ -197,7 +200,7 @@ def update_user(username: str, u: UserCreate):
         raise HTTPException(404, "User not found")
     return UserOut(**dict(zip([c.name for c in cur.description], row)))
 
-@router.delete("/users/{username}")
+@app.delete("/api/users/{username}")
 def delete_user(username: str):
     cur.execute("DELETE FROM users WHERE username=%s RETURNING 1", (username,))
     if not cur.fetchone():
@@ -205,7 +208,7 @@ def delete_user(username: str):
     return {"ok": True}
 
 # 3) User access
-@router.post("/access", response_model=AccessEntry)
+@app.post("/api/access", response_model=AccessEntry)
 def create_access(a: AccessEntry):
     cur.execute(
         "INSERT INTO user_access (role,page_name,can_read,can_write) VALUES(%s,%s,%s,%s) RETURNING role,page_name,can_read,can_write",
@@ -214,12 +217,12 @@ def create_access(a: AccessEntry):
     row = cur.fetchone()
     return AccessEntry(**dict(zip([c.name for c in cur.description], row)))
 
-@router.get("/access", response_model=list[AccessEntry])
+@app.get("/api/access", response_model=list[AccessEntry])
 def list_access():
     cur.execute("SELECT role,page_name,can_read,can_write FROM user_access")
     return [AccessEntry(**dict(zip([c.name for c in cur.description], row))) for row in cur.fetchall()]
 
-@router.put("/access/{role}/{page_name}", response_model=AccessEntry)
+@app.put("/api/access/{role}/{page_name}", response_model=AccessEntry)
 def update_access(role: str, page_name: str, a: AccessEntry):
     cur.execute(
         "UPDATE user_access SET can_read=%s,can_write=%s WHERE role=%s AND page_name=%s RETURNING role,page_name,can_read,can_write",
@@ -230,7 +233,7 @@ def update_access(role: str, page_name: str, a: AccessEntry):
         raise HTTPException(404, "Access entry not found")
     return AccessEntry(**dict(zip([c.name for c in cur.description], row)))
 
-@router.delete("/access/{role}/{page_name}")
+@app.delete("/api/access/{role}/{page_name}")
 def delete_access(role: str, page_name: str):
     cur.execute("DELETE FROM user_access WHERE role=%s AND page_name=%s RETURNING 1", (role, page_name))
     if not cur.fetchone():
@@ -238,13 +241,13 @@ def delete_access(role: str, page_name: str):
     return {"ok": True}
 
 # 4) Message master
-@router.post("/messages", response_model=MessageEntry)
+@app.post("/api/messages", response_model=MessageEntry)
 def create_message(m: MessageEntry):
     cur.execute("INSERT INTO message_master(code,message) VALUES(%s,%s) RETURNING code,message", (m.code, m.message))
     row = cur.fetchone()
     return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
 
-@router.get("/messages/{code}", response_model=MessageEntry)
+@app.get("/api/messages/{code}", response_model=MessageEntry)
 def read_message(code: str):
     cur.execute("SELECT code,message FROM message_master WHERE code=%s", (code,))
     row = cur.fetchone()
@@ -252,7 +255,7 @@ def read_message(code: str):
         raise HTTPException(404, "Message not found")
     return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
 
-@router.put("/messages/{code}", response_model=MessageEntry)
+@app.put("/api/messages/{code}", response_model=MessageEntry)
 def update_message(code: str, m: MessageEntry):
     cur.execute(
         "UPDATE message_master SET message=%s WHERE code=%s RETURNING code,message",
@@ -263,7 +266,7 @@ def update_message(code: str, m: MessageEntry):
         raise HTTPException(404, "Message not found")
     return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
 
-@router.delete("/messages/{code}")
+@app.delete("/api/messages/{code}")
 def delete_message(code: str):
     cur.execute("DELETE FROM message_master WHERE code=%s RETURNING 1", (code,))
     if not cur.fetchone():
@@ -271,7 +274,7 @@ def delete_message(code: str):
     return {"ok": True}
 
 # 5) PLC Test parameters
-@router.post("/plc-tests", status_code=201)
+@app.post("/api/plc-tests", status_code=201)
 def create_plc_test(p: PLCTest):
     cur.execute(
         "INSERT INTO plc_test(param1,param2,param3,param4,param5,param6) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id,param1,param2,param3,param4,param5,param6",
@@ -280,18 +283,18 @@ def create_plc_test(p: PLCTest):
     row = cur.fetchone()
     return dict(zip([c.name for c in cur.description], row))
 
-@router.get("/plc-tests", response_model=list[PLCTest])
+@app.get("/api/plc-tests", response_model=list[PLCTest])
 def list_plc_tests():
     cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test")
     return [PLCTest(**dict(zip([c.name for c in cur.description], row))) for row in cur.fetchall()]
 
-@router.get("/plc-tests/{test_id}")
+@app.get("/api/plc-tests/{test_id}")
 def read_plc_test(test_id: int):
     cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test WHERE id=%s", (test_id,))
     row = cur.fetchone()
 
 # 6) Shifts CRUD
-@router.post("/shifts", response_model=ShiftOut, status_code=201)
+@app.post("/api/shifts", response_model=ShiftOut, status_code=201)
 def create_shift(s: ShiftIn):
     cur.execute(
         """
@@ -304,7 +307,7 @@ def create_shift(s: ShiftIn):
     row = cur.fetchone()
     return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
 
-@router.get("/shifts", response_model=List[ShiftOut])
+@app.get("/api/shifts", response_model=List[ShiftOut])
 def list_shifts():
     cur.execute("""
       SELECT id,name,
@@ -318,7 +321,7 @@ def list_shifts():
         for row in cur.fetchall()
     ]
 
-@router.get("/shifts/{shift_id}", response_model=ShiftOut)
+@app.get("/api/shifts/{shift_id}", response_model=ShiftOut)
 def read_shift(shift_id: int):
     cur.execute("""
       SELECT id,name,
@@ -332,7 +335,7 @@ def read_shift(shift_id: int):
         raise HTTPException(404, "Shift not found")
     return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
 
-@router.put("/shifts/{shift_id}", response_model=ShiftOut)
+@app.put("/api/shifts/{shift_id}", response_model=ShiftOut)
 def update_shift(shift_id: int, s: ShiftIn):
     cur.execute("""
       UPDATE shift_master
@@ -347,15 +350,14 @@ def update_shift(shift_id: int, s: ShiftIn):
         raise HTTPException(404, "Shift not found")
     return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
 
-@router.delete("/shifts/{shift_id}", status_code=204)
+@app.delete("/api/shifts/{shift_id}", status_code=204)
 def delete_shift(shift_id: int):
     cur.execute("DELETE FROM shift_master WHERE id = %s RETURNING 1", (shift_id,))
     if not cur.fetchone():
         raise HTTPException(404, "Shift not found")
     return
 
-# ─── FastAPI + WS ────────────────────────────────────────────
-app = FastAPI()
+
 
 class LoginReq(BaseModel):
     Username: str
@@ -535,8 +537,8 @@ async def login(req: LoginReq):
     # 6) fire PLC login‐bit = 1
     request_id = str(uuid.uuid4())
     await producer.send_and_wait("plc_write_commands", {
-      "section":    "login",
-      "tag_name":   "login",
+      "section":    "auto",
+      "tag_name":   "start_ack",
       "value":      1,
       "request_id": request_id
     })
@@ -618,4 +620,3 @@ def current_operator(token: str = Header(None,alias="X-Auth-Token")):
 #             raise HTTPException(401,"Not logged in")
 #     return await call_next(request)
 
-app.include_router(router)

@@ -255,8 +255,13 @@
             "SCARRA_ROBOT_COMM_OK": 3204,
             "LCMR_COMM_OK": 3205,
             "GANTRY_1": 3206,
-            "GANTRY_2": 3207
-        }
+            "GANTRY_2": 3207,
+            "START_ACTIVE": 3301,
+            "STOP_REQ":      3302
+        },
+        "write": {
+            "START_ACK": 3300
+    }
     },
     "io": {
         "read": {

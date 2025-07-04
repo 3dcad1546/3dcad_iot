@@ -27,6 +27,7 @@ AUTO_STATUS                = os.getenv("AUTO_STATUS",                "auto_statu
 ROBO_STATUS                = os.getenv("ROBO_STATUS",                "robo_status")
 IO_STATUS                  = os.getenv("IO_STATUS",                  "io_status")
 OEE_STATUS                 = os.getenv("OEE_STATUS",                 "oee_status")
+ON_OFF_STATUS              = os.getenv("ON_OFF_STATUS",              "on_off_status")
 
 # ─── FastAPI App ─────────────────────────────────────────────────
 app = FastAPI()

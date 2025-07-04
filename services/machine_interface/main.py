@@ -42,16 +42,16 @@ KAFKA_TOPIC_AUTO_STATUS = os.getenv("AUTO_STATUS_TOPIC", "auto_status")
 KAFKA_TOPIC_ROBO_STATUS = os.getenv("ROBO_STATUS_TOPIC", "robo_status")
 KAFKA_TOPIC_IO_STATUS = os.getenv("IO_STATUS_TOPIC", "io_status")
 KAFKA_TOPIC_OEE_STATUS = os.getenv("OEE_STATUS_TOPIC", "oee_status") # New topic for OEE data
+KAFKA_TOPIC_ON_OFF_STATUS = os.getenv("ON_OFF_TOPIC", "on_off_status")
 
 # Barcode related registers (No change)
 BARCODE_FLAG_1 = 3303
 BARCODE_FLAG_2 = 3304
 BARCODE_1_BLOCK = (3100, 16)
 BARCODE_2_BLOCK = (3132, 16)
-LOGIN_REGISTER   = 3309 
 
 # Mode 1 → Auto and 0 → Manual
-MODE_REGISTER    = int(os.getenv("MODE_REGISTER", "3310"))
+MODE_REGISTER    = int(os.getenv("MODE_REGISTER", "1001"))
 MES_PC_URL       = os.getenv("MES_PC_URL")
 TRACE_HOST       = os.getenv("TRACE_HOST", "trace-proxy")
 CBS_STREAM_NAME  = os.getenv("CBS_STREAM", "line1")
@@ -106,6 +106,8 @@ async def init_aiokafka_producer():
             logger.warning(f"Kafka error ({attempt + 1}/10): {e}")
         await asyncio.sleep(5)
     raise RuntimeError("Kafka producer failed after 10 attempts")
+
+
 
 # Simulation of PLC
 async def simulate_plc_data():
@@ -431,19 +433,32 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             flags_response = await client.read_holding_registers(address=BARCODE_FLAG_1, count=2)
             # ─── Read Auto/Manual mode
             mode_rr = await client.read_holding_registers(address=MODE_REGISTER, count=1)
+            
             if mode_rr.isError() or not mode_rr.registers:
                 is_auto = False
             else:
                 is_auto = (mode_rr.registers[0] == 1)
+                # ── Read START_ACTIVE & STOP_REQ ──
+                sa_rr = await client.read_holding_registers(address=3301, count=1)
+                sr_rr = await client.read_holding_registers(address=3302, count=1)
+                start_active = (not sa_rr.isError()) and bool(sa_rr.registers[0])
+                # STOP_REQ is “pressed” when the bit is LOW (0)
+                stop_req     = (not sr_rr.isError()) and (sr_rr.registers[0] == 0)
+
+                # Override auto if STOP_REQ pressed
+                effective_auto = is_auto and (not stop_req)
                 if aio_producer:
                     await aio_producer.send(KAFKA_TOPIC_MANUAL_STATUS, {
-                    "mode_auto": is_auto,
-                    "ts": now
+                    "mode_auto":     effective_auto,
+                    "start_active":  start_active,
+                    "stop_req":      stop_req,
+                    "ts":            now
                     })
 
             if not flags_response.isError():
                 flag1, flag2 = flags_response.registers
-                
+
+
                 if flag1 == 1:
                     words_response = await client.read_holding_registers(*BARCODE_1_BLOCK)
                     if not words_response.isError():
