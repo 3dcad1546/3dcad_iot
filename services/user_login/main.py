@@ -89,9 +89,9 @@ class MachineConfig(BaseModel):
 class UserCreate(BaseModel):
     first_name: str
     last_name: str
-    username: str = Field(...,regex=r"^[a-zA-Z0-9_]+$")
+    username: str = Field(...,pattern=r"^[a-zA-Z0-9_]+$")
     password: str
-    role: str = Field(...,regex=r"^(operator|admin|engineer)$")
+    role: str = Field(...,pattern=r"^(operator|admin|engineer)$")
 
 class UserOut(BaseModel):
     id: uuid.UUID
@@ -101,7 +101,7 @@ class UserOut(BaseModel):
     role: str
 
 class AccessEntry(BaseModel):
-    role: str = Field(...,regex=r"^(operator|admin|engineer)$")
+    role: str = Field(...,pattern=r"^(operator|admin|engineer)$")
     page_name: str
     can_read: bool = True
     can_write: bool = False
@@ -120,8 +120,8 @@ class PLCTest(BaseModel):
 
 class ShiftIn(BaseModel):
      name: str
-     start_time: str = Field(..., regex=r'^\d{2}:\d{2}:\d{2}$')  # "HH:MM:SS"
-     end_time:   str = Field(..., regex=r'^\d{2}:\d{2}:\d{2}$')
+     start_time: str = Field(..., pattern=r'^\d{2}:\d{2}:\d{2}$')  # "HH:MM:SS"
+     end_time:   str = Field(..., pattern=r'^\d{2}:\d{2}:\d{2}$')
 
 class ShiftOut(ShiftIn):
     id: int
