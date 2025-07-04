@@ -67,12 +67,16 @@ async def login(req: LoginRequest):
     }
 
     # 3) broadcast to any WS listeners
-    await ws_mgr.broadcast({
+    try:
+        await ws_mgr.broadcast({
         "event":    "login",
         "username": req.Username,
         "role":     role,
         "ts":       datetime.utcnow().isoformat() + "Z"
-    })
+        })
+    except Exception as e:
+        print("WebSocket broadcast error:", e)
+
 
     # 4) return token + info
     return {
@@ -91,11 +95,15 @@ async def logout(req: LogoutRequest):
         raise HTTPException(401, "Invalid or expired token")
 
     # broadcast
-    await ws_mgr.broadcast({
-        "event":    "logout",
-        "username": info["username"],
-        "ts":       datetime.utcnow().isoformat() + "Z"
-    })
+    try:
+        await ws_mgr.broadcast({
+                "event":    "logout",
+                "username": info["username"],
+                "ts":       datetime.utcnow().isoformat() + "Z"
+            })
+    except Exception as e:
+        print("WebSocket broadcast error:", e)
+
 
     return {"message":"Logged out"}
 
