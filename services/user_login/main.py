@@ -609,13 +609,13 @@ def current_operator(token: str = Header(None,alias="X-Auth-Token")):
     return {"username":row[0],"shift_id":sid,"shift_name":name,"shift_start":st.isoformat(),"shift_end":et.isoformat()}
 
 # ── Protect all other /api ─────────────────────────────────────────
-@app.middleware("http")
-async def protect(request,call_next):
-    if request.url.path.startswith("/api") and request.url.path not in ("/api/login","/api/verify","/api/current_operator"):
-        token=request.headers.get("X-Auth-Token")
-        cur.execute("SELECT 1 FROM sessions WHERE token=%s AND logout_ts IS NULL",(token,))
-        if not cur.fetchone():
-            raise HTTPException(401,"Not logged in")
-    return await call_next(request)
+# @app.middleware("http")
+# async def protect(request,call_next):
+#     if request.url.path.startswith("/api") and request.url.path not in ("/api/login","/api/verify","/api/current_operator"):
+#         token=request.headers.get("X-Auth-Token")
+#         cur.execute("SELECT 1 FROM sessions WHERE token=%s AND logout_ts IS NULL",(token,))
+#         if not cur.fetchone():
+#             raise HTTPException(401,"Not logged in")
+#     return await call_next(request)
 
 app.include_router(router)
