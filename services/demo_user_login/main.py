@@ -48,7 +48,83 @@ class LoginReq(BaseModel):
             raise ValueError('Role must be one of operator, admin, engineer')
         return v
 
+<<<<<<< HEAD
+def require_token(token: str = Header(None, alias="X-Auth-Token")):
+    if not token or token not in session_store:
+        raise HTTPException(401, "Invalid or missing auth token")
+    return session_store[token]  # returns {"username":..., "role":...}
+
+# ─── Login ───────────────────────────────────────────────────────────────────
+@app.post("/api/login")
+async def login(req: LoginRequest):
+    # 1) determine role
+    if req.Username in ADMIN_IDS:
+        role = "admin"
+    elif req.Username in ENGINEER_IDS:
+        role = "engineer"
+    elif req.Username in OPERATOR_IDS:
+        role = "operator"
+    else:
+        raise HTTPException(403, "User not permitted")
+
+    # 2) (demo) accept any password, issue token
+    token = str(uuid.uuid4())
+    session_store[token] = {
+        "username": req.Username,
+        "role":     role
+    }
+
+    # 3) broadcast to any WS listeners
+    try:
+        await ws_mgr.broadcast({
+        "event":    "login",
+        "username": req.Username,
+        "role":     role,
+        "ts":       datetime.utcnow().isoformat() + "Z"
+        })
+    except Exception as e:
+        print("WebSocket broadcast error:", e)
+
+
+    # 4) return token + info
+    return {
+        
+        "token":    token,
+        "username": req.Username,
+        "role":     role,
+        "shift":    get_current_shift()
+    }
+
+# ─── Logout ──────────────────────────────────────────────────────────────────
+@app.post("/api/logout")
+async def logout(req: LogoutRequest):
+    info = session_store.pop(req.Token, None)
+    if not info:
+        raise HTTPException(401, "Invalid or expired token")
+
+    # broadcast
+    try:
+        await ws_mgr.broadcast({
+                "event":    "logout",
+                "username": info["username"],
+                "ts":       datetime.utcnow().isoformat() + "Z"
+            })
+    except Exception as e:
+        print("WebSocket broadcast error:", e)
+
+
+    return {"message":"Logged out"}
+
+# ─── Verify ──────────────────────────────────────────────────────────────────
+@app.get("/api/verify")
+def verify(sess=Depends(require_token)):
+    # simply echo back
+    return {"username": sess["username"], "role": sess["role"]}
+
+# ─── WebSocket manager ───────────────────────────────────────────────────────
+=======
 # ─── WebSocket Connection Manager ───────────────────────────────────────
+>>>>>>> c135ddc98651c7cc1fdb70e57fc108783fb7aa14
 class ConnectionManager:
     def __init__(self):
         self.conns: set[WebSocket] = set()
