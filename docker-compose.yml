@@ -28,32 +28,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-  demo_user_login:
-    build:
-      context: ./services/demo_user_login
-    container_name: demo_user_login
+
+      
+  user_login:
+    build: 
+      context: ./services/user_login
+    container_name: user_login
     environment:
-      - OPERATOR_IDS=op1,op2,op3
-      - ADMIN_IDS=admin
-      - ENGINEER_IDS=eng
+      DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
+      KAFKA_BROKER: kafka:9092
+      MACHINE_ID: MACHINE_XYZ
+      PLC_IP: 192.168.10.3
+      PLC_PORT: 502
+      MODE_REGISTER: 3309
     ports:
       - "8001:8001"
-      
-  # user_login:
-  #   build: 
-  #     context: ./services/user_login
-  #   container_name: user_login
-  #   environment:
-  #     DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
-  #   ports:
-  #     - "8001:8001"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     kafka: 
-  #       condition: service_healthy
-  #   env_file:
-  #     - ./.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka: 
+        condition: service_healthy
+    env_file:
+      - ./.env
+
   dashboard-api:
     build:
       context: ./services/dashboard_api
@@ -61,8 +58,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # USER_SVC_URL : http://user_login:8001
-      USER_SVC_URL: http://demo_user_login:8001
+      USER_SVC_URL: http://user_login:8001
       DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
       INFLUXDB_URL: http://influxdb:8086
       INFLUXDB_TOKEN: edgetoken
@@ -78,7 +74,7 @@ services:
         condition: service_healthy
       machine-interface:
         condition: service_started
-      demo_user_login:
+      user_login:
         condition: service_started
     env_file:
       - ./.env
@@ -91,8 +87,11 @@ services:
       LOCAL_SERVER_AUTH_TOKEN: dummy_token
       POLLING_INTERVAL: 30
       KAFKA_BROKER: kafka:9092
+      DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
     depends_on:
       kafka:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     env_file:
       - ./.env
@@ -109,8 +108,7 @@ services:
       MES_PROCESS_CONTROL_URL: http://mes-server/api/pc
       TRACE_PROXY_HOST: trace-proxy:8765
       DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
-      # MACHINE_ID: ${MACHINE_ID}
-      USER_LOGIN_URL: http://demo_user_login:8001
+      USER_LOGIN_URL: http://user_login:8001
 
     depends_on:
       kafka:
@@ -129,12 +127,16 @@ services:
     environment:
       MQTT_BROKER: mqtt-broker
       KAFKA_BROKER: kafka:9092
+      USER_LOGIN_URL: http://user_login:8001
+      DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
       mqtt-broker:
+        condition: service_started
+      user_login:
         condition: service_started
     env_file:
       - ./.env
@@ -144,13 +146,14 @@ services:
   # network_mode: "host"  # Shares host's network stack
     container_name: machine_interface
     environment:
+      DB_URL: postgresql://edge:edgepass@postgres:5432/edgedb
       PLC_IP: 192.168.10.3  # Actual PLC I
       PLC_PORT: 502
       KAFKA_BROKER: kafka:9092
     depends_on:
       kafka:
         condition: service_healthy
-      demo_user_login:
+      user_login:
         condition: service_started
     env_file:
       - ./.env
@@ -215,10 +218,10 @@ services:
         - "1883:1883"     # MQTT clients (like your trigger_service) connect here
         - "9001:9001"     # optional: WebSocket MQTT if you ever need it
       volumes:
-        - ./mosquitto/config:/mosquitto/config   # place a mosquitto.conf here if you need custom settings
         - ./mosquitto/data:/mosquitto/data       # persistent message store (if you enable persistence)
         - ./mosquitto/log:/mosquitto/log         # broker logs
       restart: unless-stopped
+
 
 volumes:
   pgdata:

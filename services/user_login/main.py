@@ -1,363 +1,375 @@
-import os, uuid, asyncio, json, psycopg2, requests
+import os, uuid, asyncio, json, time as pytime, requests
 from datetime import datetime, timedelta, time as dtime
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Header, status
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, status,APIRouter, Depends
+from pydantic import BaseModel, validator, constr, Field
+import psycopg2
 from aiokafka import AIOKafkaProducer
-# from pymodbus.client.async_tcp import AsyncModbusTcpClient
 from pymodbus.client.tcp import AsyncModbusTcpClient
-import time
-OPERATOR_IDS = os.getenv("OPERATOR_IDS","").split(",")
-ADMIN_IDS    = os.getenv("ADMIN_IDS","").split(",")
-ENGINEER_IDS = os.getenv("ENGINEER_IDS","").split(",")
-PLC_IP       = os.getenv("PLC_IP")
-PLC_PORT     = int(os.getenv("PLC_PORT","502"))
-MODE_REGISTER= int(os.getenv("MODE_REGISTER","3310"))
+from passlib.hash import bcrypt
+from typing import List
 
-# ── Environment & DB Setup ─────────────────────────────────────────
-DB_URL = os.getenv("DB_URL", "postgresql://edge:edgepass@postgres:5432/edgedb")
+
+# Router for CRUD operations
+router = APIRouter(prefix="/api", tags=["CRUD"])
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.verify(plain, hashed)
+
+# toggle to skip the external MES login call while it’s not available
+SKIP_MES_LOGIN = os.getenv("SKIP_MES_LOGIN", "false").lower() in ("1","true")
+OPERATOR_IDS  = os.getenv("OPERATOR_IDS", "op1").split(",")
+# ─── Env & DB ───────────────────────────────────────────────
+DB_URL       = os.getenv("DB_URL","postgresql://edge:edgepass@postgres:5432/edgedb")
+KAFKA_BOOT   = os.getenv("KAFKA_BROKER","kafka:9092")
+PLC_IP       = os.getenv("PLC_IP","192.168.10.3")
+PLC_PORT     = int(os.getenv("PLC_PORT","502"))
+LOGIN_BIT    = int(os.getenv("MODE_REGISTER","3309"))   # PLC register for login
+
+# connect to Postgres
 for _ in range(10):
     try:
         conn = psycopg2.connect(DB_URL)
         break
     except psycopg2.OperationalError:
-        print("Postgres not ready, retrying…")
-        time.sleep(2)
+        pytime.sleep(2)
 else:
     raise RuntimeError("Cannot connect to Postgres")
 conn.autocommit = True
 cur = conn.cursor()
 
-# ── Ensure New Tables Exist ────────────────────────────────────────
+# ensure sessions tables exist (init.sql should have done this):
+# ── ensure our session tables + enum exist ─────────────────────────
+# (we split the statements so Postgres parses them cleanly)
+try:
+    cur.execute("CREATE TYPE user_role AS ENUM ('operator','admin','engineer')")
+except psycopg2.errors.DuplicateObject:
+    # type already exists, no-op
+    pass
+
 cur.execute("""
-CREATE TABLE IF NOT EXISTS shift_master (
-  id SERIAL PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  start_time TIME NOT NULL,
-  end_time TIME NOT NULL
-);
+  CREATE TABLE IF NOT EXISTS sessions (
+    token      UUID       PRIMARY KEY,
+    username   TEXT       NOT NULL,
+    role       user_role  NOT NULL,
+    shift_id   INTEGER    NOT NULL REFERENCES shift_master(id),
+    login_ts   TIMESTAMP  NOT NULL DEFAULT NOW(),
+    logout_ts  TIMESTAMP
+  )
 """)
+
 cur.execute("""
-CREATE TABLE IF NOT EXISTS machine_config (
-  id SERIAL PRIMARY KEY,
-  machine_id TEXT UNIQUE NOT NULL,
-  mes_process_control_url TEXT NOT NULL,
-  mes_upload_url TEXT NOT NULL,
-  is_mes_enabled BOOLEAN NOT NULL DEFAULT TRUE
-);
+  CREATE TABLE IF NOT EXISTS operator_sessions (
+    id         SERIAL     PRIMARY KEY,
+    username   TEXT       NOT NULL,
+    shift_id   INTEGER    NOT NULL REFERENCES shift_master(id),
+    login_ts   TIMESTAMP  NOT NULL DEFAULT NOW(),
+    logout_ts  TIMESTAMP
+  )
 """)
 
-# ── Seed Shifts (if missing) ──────────────────────────────────────
-PREDEFINED_SHIFTS = [
-    ("Shift A", dtime(6,0),  dtime(14,0)),
-    ("Shift B", dtime(14,0), dtime(22,0)),
-    ("Shift C", dtime(22,0), dtime(6,0))
-]
-for name, st, et in PREDEFINED_SHIFTS:
-    cur.execute("""
-      INSERT INTO shift_master(name,start_time,end_time)
-      VALUES(%s,%s,%s) ON CONFLICT(name) DO NOTHING;
-    """, (name, st, et))
-
-# ── Kafka Producer Setup for PLC Writes ───────────────────────────
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BROKER", "kafka:9092")
-PLC_WRITE_TOPIC = os.getenv("PLC_WRITE_COMMANDS_TOPIC", "plc_write_commands")
-kafka_producer: AIOKafkaProducer
-
+# ─── Kafka producer ───────────────────────────────────────────
+producer: AIOKafkaProducer
 async def init_kafka():
-    global kafka_producer
-    kafka_producer = AIOKafkaProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8")
+    global producer
+    producer = AIOKafkaProducer(
+        bootstrap_servers=KAFKA_BOOT,
+        value_serializer=lambda v: json.dumps(v).encode()
     )
-    await kafka_producer.start()
-    print("Kafka producer started.")
+    await producer.start()
+# ─── Pydantic Schemas ─────────────────────────────────────────────────────────────
+class MachineConfig(BaseModel):
+    machine_id: str
+    mes_process_control_url: str
+    mes_upload_url: str
+    is_mes_enabled: bool = True
+    trace_process_control_url: str
+    trace_interlock_url: str
+    is_trace_enabled: bool = True
 
-# ── FastAPI & Auth ────────────────────────────────────────────────
-app = FastAPI()
-_current_user: str = None
+class UserCreate(BaseModel):
+    first_name: str
+    last_name: str
+    username: str = Field(...,pattern=r"^[a-zA-Z0-9_]+$")
+    password: str
+    role: str = Field(...,pattern=r"^(operator|admin|engineer)$")
 
-def require_login():
-    if not _current_user:
-        raise HTTPException(401, "Not logged in")
+class UserOut(BaseModel):
+    id: uuid.UUID
+    first_name: str
+    last_name: str
+    username: str
+    role: str
 
-# ── WebSocket Manager ─────────────────────────────────────────────
-class ConnectionManager:
-    def __init__(self):
-        self.clients: set[WebSocket] = set()
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self.clients.add(ws)
-    def disconnect(self, ws: WebSocket):
-        self.clients.discard(ws)
-    async def broadcast(self, msg: dict):
-        living = set()
-        for ws in self.clients:
-            try:
-                await ws.send_json(msg)
-                living.add(ws)
-            except:
-                pass
-        self.clients = living
+class AccessEntry(BaseModel):
+    role: str = Field(...,pattern=r"^(operator|admin|engineer)$")
+    page_name: str
+    can_read: bool = True
+    can_write: bool = False
 
-ws_mgr = ConnectionManager()
+class MessageEntry(BaseModel):
+    code: str
+    message: str
 
-@app.websocket("/ws/login-status")
-async def ws_login_status(ws: WebSocket):
-    await ws_mgr.connect(ws)
-    try:
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        ws_mgr.disconnect(ws)
+class PLCTest(BaseModel):
+    param1: bool
+    param2: bool
+    param3: bool
+    param4: bool
+    param5: bool
+    param6: bool
 
-# ── Models ────────────────────────────────────────────────────────
-class LoginRequest(BaseModel):
-    Username: str
-    Password: str
+class ShiftIn(BaseModel):
+     name: str
+     start_time: str = Field(..., pattern=r'^\d{2}:\d{2}:\d{2}$')  # "HH:MM:SS"
+     end_time:   str = Field(..., pattern=r'^\d{2}:\d{2}:\d{2}$')
 
-class LogoutRequest(BaseModel):
-    Username: str
+class ShiftOut(ShiftIn):
+    id: int
 
-# ── Startup Event ─────────────────────────────────────────────────
-@app.on_event("startup")
-async def on_startup():
-    await init_kafka()
-    # Schedule shift‐end watcher
-    asyncio.create_task(shift_end_watcher())
 
-# ── Helper: Determine current shift ────────────────────────────────
-def get_current_shift():
-    now = datetime.now().time()
-    cur.execute("SELECT id, name, start_time, end_time FROM shift_master;")
-    for sid,name,st,et in cur.fetchall():
-        if st < et and st <= now < et or (st > et and (now >= st or now < et)):
-            return sid,name,st,et
-    return None, None, None, None
-    
-
-# ── 5) Auto-logout at shift end ─────────────────────────────────────
-async def shift_end_watcher():
-    while True:
-        sid, name, st, et = get_current_shift()
-        if not sid:
-            # no active shift—recheck in 5m
-            await asyncio.sleep(300)
-            continue
-
-        # ─── 1) sleep until shift-end ─────────────────────────────
-        today  = datetime.now().date()
-        end_dt = datetime.combine(today, et)
-        if et < st:             # overnight shift
-            end_dt += timedelta(days=1)
-        delay = (end_dt - datetime.now()).total_seconds()
-        await asyncio.sleep(max(delay, 0))
-
-        # ─── 2) read PLC register 3309 (auto_status) asynchronously ──
-        plc = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
-        await plc.connect()
-        status_val = None
-        if plc.connected:
-            rr = await plc.read_holding_registers(3309, count=1)
-            if not rr.isError() and rr.registers:
-                status_val = rr.registers[0]
-        await plc.close()
-
-        # ─── 3) persist that pre‐logout status in its own table ─────
-        # (you’ll need this new DDL)
-        cur.execute("""
-          INSERT INTO auto_status_log(shift_id, status_val, ts)
-          VALUES (%s, %s, NOW())
-        """, (sid, status_val))
-
-        # ─── 4) mark all open operator_sessions for this shift as logged out ─
-        cur.execute("""
-          UPDATE operator_sessions
-          SET logout_ts = NOW()
-          WHERE shift_id = %s
-            AND logout_ts IS NULL
-        """, (sid,))
-
-        # ─── 5) enqueue the actual PLC‐write = 0 (auto‐logout) ──────────
-        req_id = str(uuid.uuid4())
-        await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, {
-          "section":   "login",
-          "tag_name":  "login",
-          "value":     0,
-          "request_id": req_id
-        })
-
-        # ─── 6) notify any dashboards via WebSocket ───────────────────
-        await ws_mgr.broadcast({
-          "event":       "auto-logout",
-          "shift":       name,
-          "timestamp":   datetime.now().isoformat(),
-          "prev_status": status_val
-        })
-
-# ── 1➞3) Login Endpoint ────────────────────────────────────────────
-@app.post("/api/login")
-async def login(req: LoginRequest):
-    # 1) permission check
-    if req.Username in ADMIN_IDS:
-        role = 'admin'
-    elif req.Username in ENGINEER_IDS:
-        role = 'engineer'
-    elif req.Username in OPERATOR_IDS:
-        role = 'operator'
-    else:
-        raise HTTPException(403, "Operator not permitted")
-
-    # 2) (Optionally) call MES login URL from machine_config
-    cur.execute("SELECT mes_process_control_url,mes_upload_url,is_mes_enabled FROM machine_config WHERE machine_id=%s",
-                (os.getenv("MACHINE_ID"),))
+# ─── CRUD Endpoints ──────────────────────────────────────────────────────────────
+# 1) Machine Config
+@router.post("/machine-config", response_model=MachineConfig)
+def create_machine(cfg: MachineConfig):
+    cur.execute(
+        "INSERT INTO machine_config (machine_id, mes_process_control_url, mes_upload_url, is_mes_enabled, trace_process_control_url, trace_interlock_url, is_trace_enabled) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled",
+        (cfg.machine_id, cfg.mes_process_control_url, cfg.mes_upload_url, cfg.is_mes_enabled, cfg.trace_process_control_url, cfg.trace_interlock_url, cfg.is_trace_enabled)
+    )
     row = cur.fetchone()
-    if row and not row[2]:
-        raise HTTPException(503, "MES APIs disabled for this machine")
+    return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
 
-    # 3) Determine shift
-    sid, shift_name, st, et = get_current_shift()
-    if not sid:
-        raise HTTPException(400, "No active shift")
-
-    # 4) generate token + insert into sessions
-    token = str(uuid.uuid4())
-    cur.execute("""
-      INSERT INTO sessions(token,username,role,shift_id,login_ts)
-      VALUES(%s,%s,%s,%s,NOW())
-    """, (token, req.Username, role, sid))
-
-    # 5) also audit operator_sessions
-    cur.execute("""
-      INSERT INTO operator_sessions(username,login_ts,shift_id)
-      VALUES (%s,NOW(),%s)
-    """,(req.Username,sid))
-
-    # 6) PLC write=1
-    req_id = str(uuid.uuid4())
-    await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, {
-      "section":"login","tag_name":"login","value":1,"request_id":req_id
-    })
-
-    # 7) Broadcast via WS
-    await ws_mgr.broadcast({
-      "event":"login",
-      "username": req.Username,
-      "shift": shift_name,
-      "shift_start": st.isoformat(),
-      "shift_end": et.isoformat(),
-      "ts": datetime.now().isoformat()
-    })
-
-    return {
-      "message":"Login successful",
-      "username":req.Username,
-      "shift_id": sid,
-      "shift_name": shift_name,
-      "shift_start": st.isoformat(),
-      "shift_end": et.isoformat(),
-      "mes_urls": {
-        "process_control": row[0] if row else None,
-        "upload": row[1] if row else None
-      }
-    }
-
-# ── 6) Logout Endpoint ─────────────────────────────────────────────
-@app.post("/api/logout")
-async def logout(token: str = Header(None, alias="X-Auth-Token")):
-    # 1) verify session
-    cur.execute("""
-      SELECT username,role,shift_id
-        FROM sessions
-       WHERE token=%s AND logout_ts IS NULL
-    """,(token,))
-    r = cur.fetchone()
-    if not r:
-        raise HTTPException(401, "Not logged in")
-    username, role, sid = r
-
-    # 2) mark logout_ts in both sessions & operator_sessions
-    cur.execute("UPDATE sessions SET logout_ts=NOW() WHERE token=%s",(token,))
-    cur.execute("""
-      UPDATE operator_sessions
-         SET logout_ts=NOW()
-       WHERE username=%s AND logout_ts IS NULL
-    """,(username,))
-
-    # 3) PLC write=2
-    req_id = str(uuid.uuid4())
-    await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, {
-      "section":"login","tag_name":"login","value":2,"request_id":req_id
-    })
-
-    # 4) WS broadcast …
-    return {"message":"Logged out"}
-
-
-# ── Login verify ────────────────────────────────────
-@app.get("/api/verify")
-def verify(token: str = Header(None, alias="X-Auth-Token")):
-    if not token:
-        raise HTTPException(401, "Missing auth token")
-    cur.execute("""
-      SELECT username,role,shift_id
-        FROM sessions
-       WHERE token=%s AND logout_ts IS NULL
-    """, (token,))
+@router.get("/machine-config/{machine_id}", response_model=MachineConfig)
+def read_machine(machine_id: str):
+    cur.execute("SELECT machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled FROM machine_config WHERE machine_id=%s", (machine_id,))
     row = cur.fetchone()
     if not row:
-        raise HTTPException(401, "Invalid or expired session")
-    return {"username": row[0], "role": row[1], "shift_id": row[2]}
+        raise HTTPException(404, "Machine not found")
+    return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
 
-
-
-# ── Protect all other endpoints ────────────────────────────────────
-@app.middleware("http")
-async def auth_middleware(request, call_next):
-    if request.url.path.startswith("/api") and request.url.path not in ["/api/login","/api/verify"]:
-        token = request.headers.get("X-Auth-Token")
-        cur.execute("SELECT 1 FROM sessions WHERE token=%s AND logout_ts IS NULL", (token,))
-        if not cur.fetchone():
-            raise HTTPException(401,"Not logged in")
-    return await call_next(request)
-
-
-
-# ── Seed Shifts (if missing) ──────────────────────────────────────
-PREDEFINED_SHIFTS = [
-    ("Shift A", dtime(6,0),  dtime(14,0)),
-    ("Shift B", dtime(14,0), dtime(22,0)),
-    ("Shift C", dtime(22,0), dtime(6,0))
-]
-for name, st, et in PREDEFINED_SHIFTS:
-    cur.execute("""
-      INSERT INTO shift_master(name,start_time,end_time)
-      VALUES(%s,%s,%s) ON CONFLICT(name) DO NOTHING;
-    """, (name, st, et))
-
-# ── Kafka Producer Setup for PLC Writes ───────────────────────────
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BROKER", "kafka:9092")
-PLC_WRITE_TOPIC = os.getenv("PLC_WRITE_COMMANDS_TOPIC", "plc_write_commands")
-kafka_producer: AIOKafkaProducer
-
-async def init_kafka():
-    global kafka_producer
-    kafka_producer = AIOKafkaProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8")
+@router.put("/machine-config/{machine_id}", response_model=MachineConfig)
+def update_machine(machine_id: str, cfg: MachineConfig):
+    cur.execute(
+        "UPDATE machine_config SET mes_process_control_url=%s,mes_upload_url=%s,is_mes_enabled=%s,trace_process_control_url=%s,trace_interlock_url=%s,is_trace_enabled=%s WHERE machine_id=%s RETURNING machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled",
+        (cfg.mes_process_control_url, cfg.mes_upload_url, cfg.is_mes_enabled, cfg.trace_process_control_url, cfg.trace_interlock_url, cfg.is_trace_enabled, machine_id)
     )
-    await kafka_producer.start()
-    print("Kafka producer started.")
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Machine not found")
+    return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
 
-# ── FastAPI & Auth ────────────────────────────────────────────────
+@router.delete("/machine-config/{machine_id}")
+def delete_machine(machine_id: str):
+    cur.execute("DELETE FROM machine_config WHERE machine_id=%s RETURNING 1", (machine_id,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Machine not found")
+    return {"ok": True}
+
+# 2) User creation + management
+@router.post("/users", response_model=UserOut)
+def create_user(u: UserCreate):
+    hashed = bcrypt.hash(u.password)
+    user_id = uuid.uuid4()
+    cur.execute(
+        "INSERT INTO users (id, first_name, last_name, username, password_hash, role) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id, first_name, last_name, username, role",
+        (str(user_id), u.first_name, u.last_name, u.username, hashed, u.role)
+    )
+    row = cur.fetchone()
+    return UserOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/users/{username}", response_model=UserOut)
+def read_user(username: str):
+    cur.execute("SELECT id,first_name,last_name,username,role FROM users WHERE username=%s", (username,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return UserOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.put("/users/{username}", response_model=UserOut)
+def update_user(username: str, u: UserCreate):
+    hashed = bcrypt.hash(u.password)
+    cur.execute(
+        "UPDATE users SET first_name=%s,last_name=%s,password_hash=%s,role=%s WHERE username=%s RETURNING id, first_name, last_name, username, role",
+        (u.first_name, u.last_name, hashed, u.role, username)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return UserOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/users/{username}")
+def delete_user(username: str):
+    cur.execute("DELETE FROM users WHERE username=%s RETURNING 1", (username,))
+    if not cur.fetchone():
+        raise HTTPException(404, "User not found")
+    return {"ok": True}
+
+# 3) User access
+@router.post("/access", response_model=AccessEntry)
+def create_access(a: AccessEntry):
+    cur.execute(
+        "INSERT INTO user_access (role,page_name,can_read,can_write) VALUES(%s,%s,%s,%s) RETURNING role,page_name,can_read,can_write",
+        (a.role, a.page_name, a.can_read, a.can_write)
+    )
+    row = cur.fetchone()
+    return AccessEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/access", response_model=list[AccessEntry])
+def list_access():
+    cur.execute("SELECT role,page_name,can_read,can_write FROM user_access")
+    return [AccessEntry(**dict(zip([c.name for c in cur.description], row))) for row in cur.fetchall()]
+
+@router.put("/access/{role}/{page_name}", response_model=AccessEntry)
+def update_access(role: str, page_name: str, a: AccessEntry):
+    cur.execute(
+        "UPDATE user_access SET can_read=%s,can_write=%s WHERE role=%s AND page_name=%s RETURNING role,page_name,can_read,can_write",
+        (a.can_read, a.can_write, role, page_name)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Access entry not found")
+    return AccessEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/access/{role}/{page_name}")
+def delete_access(role: str, page_name: str):
+    cur.execute("DELETE FROM user_access WHERE role=%s AND page_name=%s RETURNING 1", (role, page_name))
+    if not cur.fetchone():
+        raise HTTPException(404, "Access entry not found")
+    return {"ok": True}
+
+# 4) Message master
+@router.post("/messages", response_model=MessageEntry)
+def create_message(m: MessageEntry):
+    cur.execute("INSERT INTO message_master(code,message) VALUES(%s,%s) RETURNING code,message", (m.code, m.message))
+    row = cur.fetchone()
+    return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/messages/{code}", response_model=MessageEntry)
+def read_message(code: str):
+    cur.execute("SELECT code,message FROM message_master WHERE code=%s", (code,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Message not found")
+    return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.put("/messages/{code}", response_model=MessageEntry)
+def update_message(code: str, m: MessageEntry):
+    cur.execute(
+        "UPDATE message_master SET message=%s WHERE code=%s RETURNING code,message",
+        (m.message, code)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Message not found")
+    return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/messages/{code}")
+def delete_message(code: str):
+    cur.execute("DELETE FROM message_master WHERE code=%s RETURNING 1", (code,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Message not found")
+    return {"ok": True}
+
+# 5) PLC Test parameters
+@router.post("/plc-tests", status_code=201)
+def create_plc_test(p: PLCTest):
+    cur.execute(
+        "INSERT INTO plc_test(param1,param2,param3,param4,param5,param6) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id,param1,param2,param3,param4,param5,param6",
+        (p.param1,p.param2,p.param3,p.param4,p.param5,p.param6)
+    )
+    row = cur.fetchone()
+    return dict(zip([c.name for c in cur.description], row))
+
+@router.get("/plc-tests", response_model=list[PLCTest])
+def list_plc_tests():
+    cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test")
+    return [PLCTest(**dict(zip([c.name for c in cur.description], row))) for row in cur.fetchall()]
+
+@router.get("/plc-tests/{test_id}")
+def read_plc_test(test_id: int):
+    cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test WHERE id=%s", (test_id,))
+    row = cur.fetchone()
+
+# 6) Shifts CRUD
+@router.post("/shifts", response_model=ShiftOut, status_code=201)
+def create_shift(s: ShiftIn):
+    cur.execute(
+        """
+        INSERT INTO shift_master(name,start_time,end_time)
+        VALUES (%s, %s::time, %s::time)
+        RETURNING id,name,start_time::text AS start_time,end_time::text AS end_time
+        """,
+        (s.name, s.start_time, s.end_time)
+    )
+    row = cur.fetchone()
+    return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.get("/shifts", response_model=List[ShiftOut])
+def list_shifts():
+    cur.execute("""
+      SELECT id,name,
+             start_time::text AS start_time,
+             end_time::text   AS end_time
+        FROM shift_master
+        ORDER BY id
+    """)
+    return [
+        ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+        for row in cur.fetchall()
+    ]
+
+@router.get("/shifts/{shift_id}", response_model=ShiftOut)
+def read_shift(shift_id: int):
+    cur.execute("""
+      SELECT id,name,
+             start_time::text AS start_time,
+             end_time::text   AS end_time
+        FROM shift_master
+       WHERE id = %s
+    """, (shift_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Shift not found")
+    return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.put("/shifts/{shift_id}", response_model=ShiftOut)
+def update_shift(shift_id: int, s: ShiftIn):
+    cur.execute("""
+      UPDATE shift_master
+         SET name = %s,
+             start_time = %s::time,
+             end_time   = %s::time
+       WHERE id = %s
+    RETURNING id,name,start_time::text AS start_time,end_time::text AS end_time
+    """, (s.name, s.start_time, s.end_time, shift_id))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Shift not found")
+    return ShiftOut(**dict(zip([c.name for c in cur.description], row)))
+
+@router.delete("/shifts/{shift_id}", status_code=204)
+def delete_shift(shift_id: int):
+    cur.execute("DELETE FROM shift_master WHERE id = %s RETURNING 1", (shift_id,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Shift not found")
+    return
+
+# ─── FastAPI + WS ────────────────────────────────────────────
 app = FastAPI()
-_current_user: str = None
 
-def require_login():
-    if not _current_user:
-        raise HTTPException(401, "Not logged in")
+class LoginReq(BaseModel):
+    Username: str
+    Password: str
+    Role: str
 
-# ── WebSocket Manager ─────────────────────────────────────────────
-class ConnectionManager:
+    @validator('Role')
+    def must_be_valid_role(cls, v):
+        if v not in ('operator','admin','engineer'):
+            raise ValueError("Role must be one of operator,admin,engineer")
+        return v
+
+# WS manager for login-status
+class WSManager:
     def __init__(self):
         self.clients: set[WebSocket] = set()
     async def connect(self, ws: WebSocket):
@@ -375,7 +387,7 @@ class ConnectionManager:
                 pass
         self.clients = living
 
-ws_mgr = ConnectionManager()
+ws_mgr = WSManager()
 
 @app.websocket("/ws/login-status")
 async def ws_login_status(ws: WebSocket):
@@ -386,172 +398,224 @@ async def ws_login_status(ws: WebSocket):
     except WebSocketDisconnect:
         ws_mgr.disconnect(ws)
 
-# ── Models ────────────────────────────────────────────────────────
-class LoginRequest(BaseModel):
-    Username: str
-    Password: str
-
-class LogoutRequest(BaseModel):
-    Username: str
-
-# ── Startup Event ─────────────────────────────────────────────────
-@app.on_event("startup")
-async def on_startup():
-    await init_kafka()
-    # Schedule shift‐end watcher
-    asyncio.create_task(shift_end_watcher())
-
-# ── Helper: Determine current shift ────────────────────────────────
-def get_current_shift():
+# ─── shift lookup ──────────────────────────────────────────────
+def current_shift():
     now = datetime.now().time()
     cur.execute("SELECT id,name,start_time,end_time FROM shift_master;")
     for sid,name,st,et in cur.fetchall():
-        if st < et and st <= now < et or (st > et and (now >= st or now < et)):
+        if (st < et and st <= now < et) or (st > et and (now >= st or now < et)):
             return sid,name,st,et
-    return None, None, None, None
+    return None,None,None,None
 
-# ── 5) Auto-logout at shift end ─────────────────────────────────────
-async def shift_end_watcher():
+# ─── auto-logout watcher ────────────────────────────────────────
+async def shift_watcher():
     while True:
-        sid,name,st,et = get_current_shift()
+        sid,name,st,et = current_shift()
         if sid:
-            # compute next end datetime
+            # compute next end
             today = datetime.now().date()
             end_dt = datetime.combine(today, et)
-            if et < st:  # overnight
+            if et < st:
                 end_dt += timedelta(days=1)
-            delay = (end_dt - datetime.now()).total_seconds()
-            await asyncio.sleep(max(delay,0))
-            # before logout: read auto_status once (stubbed here)
-            cur.execute("SELECT value FROM config WHERE key='AUTO_STATUS';")
-            auto_status = cur.fetchone()
+            await asyncio.sleep(max((end_dt - datetime.now()).total_seconds(), 0))
+
+            # read current PLC login‐bit
+            client = AsyncModbusTcpClient(host=PLC_IP, port=PLC_PORT)
+            await client.connect()
+            prev = None
+            if client.connected:
+                rr = await client.read_holding_registers(LOGIN_BIT,1)
+                if not rr.isError():
+                    prev = rr.registers[0]
+            await client.close()
+
+            # log in auto_status_log
             cur.execute("""
-              INSERT INTO operator_sessions(username,login_ts)
-              VALUES (%s, NOW()) RETURNING id
-            """,(auto_status or ["UNKNOWN"],))
-            # write PLC register=3309 → value=0 (auto logout)
+              INSERT INTO auto_status_log(shift_id,status_val,ts)
+              VALUES(%s,%s,NOW())
+            """,(sid,prev))
+
+            # mark operator_sessions
+            cur.execute("""
+              UPDATE operator_sessions
+                 SET logout_ts=NOW()
+               WHERE shift_id=%s AND logout_ts IS NULL
+            """,(sid,))
+
+            # send PLC write=0
             req_id = str(uuid.uuid4())
-            await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, {
-              "section": "login", "tag_name": "login", "value": 0, "request_id": req_id
+            await producer.send_and_wait("plc_write_commands", {
+                "section":"login","tag_name":"login","value":0,"request_id":req_id
             })
-            # broadcast
+
+            # WS broadcast
             await ws_mgr.broadcast({
               "event":"auto-logout",
               "shift": name,
-              "timestamp": datetime.now().isoformat(),
-              "auto_status": auto_status
+              "prev_status": prev,
+              "ts": datetime.utcnow().isoformat()+"Z"
             })
+
         else:
-            # no active shift—check again in 5m
-            await asyncio.sleep(300)
+            await asyncio.sleep(300)  # no active shift
 
-# ── 1➞3) Login Endpoint ────────────────────────────────────────────
+# ─── startup ───────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup():
+    await init_kafka()
+    asyncio.create_task(shift_watcher())
+
+# ─── Login / Logout / Verify / Current ──────────────────────────
 @app.post("/api/login")
-async def login(req: LoginRequest):
-    global _current_user
-    # 1) Verify operator in config
-    allowed = os.getenv("OPERATOR_IDS","").split(",")
-    if req.Username not in allowed:
-        raise HTTPException(403, "Operator not permitted")
+async def login(req: LoginReq):
+    
+    # 1) fetch stored hash & role
+    if req.Role == "operator" and SKIP_MES_LOGIN:
+        # only check membership in OPERATOR_IDS
+        if req.Username not in OPERATOR_IDS:
+            raise HTTPException(403, f"Operator '{req.Username}' not permitted")
+    else:   
+        cur.execute(
+            "SELECT password_hash, role FROM users WHERE username = %s",
+            (req.Username,)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(403, f"User '{req.Username}' not found")
+        stored_hash, actual_role = row
 
-    # 2) (Optionally) call MES login URL from machine_config
-    cur.execute("SELECT mes_process_control_url,mes_upload_url,is_mes_enabled FROM machine_config WHERE machine_id=%s",
-                (os.getenv("MACHINE_ID"),))
-    row = cur.fetchone()
-    if row and not row[2]:
-        raise HTTPException(503, "MES APIs disabled for this machine")
+        # 2) enforce declared role
+        if actual_role != req.Role:
+            raise HTTPException(403, f"User '{req.Username}' is not a {req.Role}")
 
-    # 3) Determine shift
-    sid, shift_name, st, et = get_current_shift()
+        # 3) credential check
+        
+        if req.Role == "operator":
+            if not SKIP_MES_LOGIN:
+                # delegate to MES
+                cur.execute(
+                    "SELECT value FROM config WHERE key = 'MES_OPERATOR_LOGIN_URL'"
+                )
+                mes_url = cur.fetchone()[0]
+                resp = requests.post(
+                    mes_url,
+                    json={"Username": req.Username, "Password": req.Password},
+                    timeout=5
+                )
+                if resp.status_code != 200 or not resp.json().get("IsSuccessful"):
+                    raise HTTPException(403, "MES login failed")
+            else:
+                # ── TEMP SKIP MES: verify against local users table instead ──
+                # (so you can still run the service end-to-end)
+                if not verify_password(req.Password, stored_hash):
+                    raise HTTPException(401, "Invalid operator credentials (local DB check)")
+        else:
+            # local bcrypt check for admin/engineer
+            if not verify_password(req.Password, stored_hash):
+                raise HTTPException(401, "Invalid credentials")
+
+    # 4) determine current shift
+    sid, shift_name, st, et = current_shift()
     if not sid:
         raise HTTPException(400, "No active shift")
 
-    # 4) Record login
-    _current_user = req.Username
+    # 5) persist session
+    token = str(uuid.uuid4())
     cur.execute("""
-      INSERT INTO operator_sessions(username,login_ts,shift_id)
-      VALUES (%s,NOW(),%s)
-    """,(req.Username,sid))
+      INSERT INTO sessions(token, username, role, shift_id, login_ts)
+      VALUES (%s, %s, %s, %s, NOW())
+    """, (token, req.Username, req.Role, sid))
 
-    # 5) Write PLC register 3309 → 1
-    req_id = str(uuid.uuid4())
-    await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, {
-      "section":"login","tag_name":"login","value":1,"request_id":req_id
+    if req.Role == "operator":
+        cur.execute("""
+          INSERT INTO operator_sessions(username, shift_id, login_ts)
+          VALUES (%s, %s, NOW())
+        """, (req.Username, sid))
+
+    # 6) fire PLC login‐bit = 1
+    request_id = str(uuid.uuid4())
+    await producer.send_and_wait("plc_write_commands", {
+      "section":    "login",
+      "tag_name":   "login",
+      "value":      1,
+      "request_id": request_id
     })
 
-    # 6) Broadcast via WS
+    # 7) broadcast WebSocket event
     await ws_mgr.broadcast({
-      "event":"login",
-      "username": req.Username,
-      "shift": shift_name,
-      "shift_start": st.isoformat(),
-      "shift_end": et.isoformat(),
-      "ts": datetime.now().isoformat()
+      "event":        "login",
+      "username":     req.Username,
+      "role":         req.Role,
+      "shift":        shift_name,
+      "shift_start":  st.isoformat(),
+      "shift_end":    et.isoformat(),
+      "ts":           datetime.utcnow().isoformat() + "Z"
     })
 
+    # 8) response
     return {
-      "message":"Login successful",
-      "username":req.Username,
-      "shift_id": sid,
-      "shift_name": shift_name,
-      "shift_start": st.isoformat(),
-      "shift_end": et.isoformat(),
-      "mes_urls": {
-        "process_control": row[0] if row else None,
-        "upload": row[1] if row else None
-      }
+      "token":        token,
+      "username":     req.Username,
+      "role":         req.Role,
+      "shift_id":     sid,
+      "shift_name":   shift_name,
+      "shift_start":  st.isoformat(),
+      "shift_end":    et.isoformat()
     }
 
-# ── 6) Logout Endpoint ─────────────────────────────────────────────
+
 @app.post("/api/logout")
-async def logout(req: LogoutRequest):
-    global _current_user
-    if req.Username != _current_user:
-        raise HTTPException(400, "Not logged in")
-    _current_user = None
-    # PLC write =2
+async def logout(token: str = Header(...,alias="X-Auth-Token")):
+    # verify
+    cur.execute("SELECT username,shift_id FROM sessions WHERE token=%s AND logout_ts IS NULL",(token,))
+    row=cur.fetchone()
+    if not row:
+        raise HTTPException(401,"Invalid session")
+    user,sid=row
+
+    # mark logout
+    cur.execute("UPDATE sessions SET logout_ts=NOW() WHERE token=%s",(token,))
+    cur.execute("""
+      UPDATE operator_sessions SET logout_ts=NOW()
+       WHERE username=%s AND shutdown_ts IS NULL
+    """,(user,))
+
+    # PLC write=2
     req_id = str(uuid.uuid4())
-    await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, {
+    await producer.send_and_wait("plc_write_commands", {
       "section":"login","tag_name":"login","value":2,"request_id":req_id
     })
-    await ws_mgr.broadcast({
-      "event":"logout","username":req.Username,"ts":datetime.now().isoformat()
-    })
+
+    await ws_mgr.broadcast({"event":"logout","username":user,"ts":datetime.utcnow().isoformat()+"Z"})
     return {"message":"Logged out"}
 
-# ── Login verify ────────────────────────────────────
 @app.get("/api/verify")
-def verify(token: str = Header(None, alias="X-Auth-Token")):
-    """
-    Confirms that the token corresponds to a logged-in operator.
-    """
-    # e.g., look up in Redis/JWT or in‐memory map
-    operator = session_store.get(token)
-    if not operator:
-        raise HTTPException(401, "Invalid session")
-    return {"username": operator}
+def verify(token: str = Header(None,alias="X-Auth-Token")):
+    cur.execute("SELECT username,role,shift_id FROM sessions WHERE token=%s AND logout_ts IS NULL",(token,))
+    row=cur.fetchone()
+    if not row:
+        raise HTTPException(401,"Invalid session")
+    return {"username":row[0],"role":row[1],"shift_id":row[2]}
 
-# ── current operator ────────────────────────────────────
-@app.get("/api/current_operator", status_code=status.HTTP_200_OK)
-def current_operator():
-    """
-    Returns the operator who most recently logged in (and not yet logged out).
-    """
-    if not _current_user:
-        raise HTTPException(404, "No operator currently logged in")
-    sid, shift_name, st, et = get_current_shift()
-    return {
-      "username":   _current_user,
-      "shift_id":   sid,
-      "shift_name": shift_name,
-      "shift_start": st.isoformat(),
-      "shift_end":   et.isoformat(),
-    }
+@app.get("/api/current_operator")
+def current_operator(token: str = Header(None,alias="X-Auth-Token")):
+    cur.execute("SELECT username,shift_id FROM sessions WHERE token=%s AND logout_ts IS NULL",(token,))
+    row=cur.fetchone()
+    if not row:
+        raise HTTPException(404,"No operator logged in")
+    sid=row[1]
+    cur.execute("SELECT name,start_time,end_time FROM shift_master WHERE id=%s",(sid,))
+    name,st,et=cur.fetchone()
+    return {"username":row[0],"shift_id":sid,"shift_name":name,"shift_start":st.isoformat(),"shift_end":et.isoformat()}
 
-# ── Protect all other endpoints ────────────────────────────────────
-@app.middleware("http")
-async def auth_middleware(request, call_next):
-    if request.url.path.startswith("/api") and request.url.path not in ["/api/login","/api/logout"]:
-        if not _current_user:
-            raise HTTPException(401,"Not logged in")
-    return await call_next(request)
+# ── Protect all other /api ─────────────────────────────────────────
+# @app.middleware("http")
+# async def protect(request,call_next):
+#     if request.url.path.startswith("/api") and request.url.path not in ("/api/login","/api/verify","/api/current_operator"):
+#         token=request.headers.get("X-Auth-Token")
+#         cur.execute("SELECT 1 FROM sessions WHERE token=%s AND logout_ts IS NULL",(token,))
+#         if not cur.fetchone():
+#             raise HTTPException(401,"Not logged in")
+#     return await call_next(request)
+
+app.include_router(router)

@@ -105,13 +105,13 @@ async def shutdown():
 # ─── Business logic stub ─────────────────────────────────────────
 import uuid, requests,httpx
 
-async def get_current_operator():
-    url = f"{os.getenv('USER_LOGIN_URL')}/api/current_operator"
+async def get_current_operator(token):
+    url = f"{os.getenv('USER_LOGIN_URL')}/api/verify"
+    headers = {"X-Auth-Token": token}
     async with httpx.AsyncClient() as client:
-        r = await client.get(url, timeout=2.0)
+        r = await client.get(url, headers=headers, timeout=2.0)
         r.raise_for_status()
-        body = r.json()
-        return body.get("username")
+        return r.json()("username")
 
 async def process_event(topic: str, msg: dict) -> dict:
     if topic != TRIGGER_TOPIC:
@@ -129,7 +129,8 @@ async def process_event(topic: str, msg: dict) -> dict:
     # """)
     # row = pg_cur.fetchone()
     # operator = row["username"] if row else None
-    operator = await get_current_operator()
+    token = msg.get("token")
+    operator = await get_current_operator(token) if token else None
 
     # 2) Get machine_config
     pg_cur.execute("""
