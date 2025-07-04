@@ -7,6 +7,7 @@ from aiokafka import AIOKafkaProducer
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from passlib.hash import bcrypt
 from typing import List
+from fastapi.middleware.cors import CORSMiddleware
 
 
 # Router for CRUD operations
@@ -204,6 +205,23 @@ def delete_user(username: str):
         raise HTTPException(404, "User not found")
     return {"ok": True}
 
+
+# added a get api to fetch the predefined roles.
+@router.get("/roles", response_model=List[str])
+def get_user_roles():
+    try:
+        
+        # Query enum values from PostgreSQL
+        cur.execute("SELECT unnest(enum_range(NULL::user_role)) AS role;")
+        roles = [row[0] for row in cur.fetchall()]
+
+        return roles
+
+    except Exception as e:
+        print("Error fetching roles:", e)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
 # 3) User access
 @router.post("/access", response_model=AccessEntry)
 def create_access(a: AccessEntry):
@@ -274,7 +292,7 @@ def delete_message(code: str):
 @router.post("/plc-tests", status_code=201)
 def create_plc_test(p: PLCTest):
     cur.execute(
-        "INSERT INTO plc_test(param1,param2,param3,param4,param5,param6) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id,param1,param2,param3,param4,param5,param6",
+        "INSERT INTO plc_test(name,param1,param2,param3,param4,param5,param6) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id,param1,param2,param3,param4,param5,param6",
         (p.param1,p.param2,p.param3,p.param4,p.param5,p.param6)
     )
     row = cur.fetchone()
@@ -282,12 +300,12 @@ def create_plc_test(p: PLCTest):
 
 @router.get("/plc-tests", response_model=list[PLCTest])
 def list_plc_tests():
-    cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test")
+    cur.execute("SELECT name,param1,param2,param3,param4,param5,param6 FROM plc_test")
     return [PLCTest(**dict(zip([c.name for c in cur.description], row))) for row in cur.fetchall()]
 
 @router.get("/plc-tests/{test_id}")
 def read_plc_test(test_id: int):
-    cur.execute("SELECT param1,param2,param3,param4,param5,param6 FROM plc_test WHERE id=%s", (test_id,))
+    cur.execute("SELECT name,param1,param2,param3,param4,param5,param6 FROM plc_test WHERE id=%s", (test_id,))
     row = cur.fetchone()
 
 # 6) Shifts CRUD
@@ -356,6 +374,7 @@ def delete_shift(shift_id: int):
 
 # ─── FastAPI + WS ────────────────────────────────────────────
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 class LoginReq(BaseModel):
     Username: str

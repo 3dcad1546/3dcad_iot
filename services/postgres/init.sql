@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS message_master (
 -- 13) PLC test parameters
 CREATE TABLE IF NOT EXISTS plc_test (
   id      SERIAL PRIMARY KEY,
+  name    TEXT NOT NULL,
   param1  BOOLEAN NOT NULL,
   param2  BOOLEAN NOT NULL,
   param3  BOOLEAN NOT NULL,
