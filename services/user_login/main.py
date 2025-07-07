@@ -380,6 +380,7 @@ def delete_shift(shift_id: int):
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+
 class LoginReq(BaseModel):
     Username: str
     Password: str

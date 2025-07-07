@@ -16,6 +16,7 @@ from typing import Optional, List, Dict
 from influxdb_client import InfluxDBClient, WriteOptions
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
+from fastapi.middleware.cors import CORSMiddleware 
 
 # ─── Configuration ──────────────────────────────────────────────
 PLC_WRITE_COMMANDS_TOPIC   = os.getenv("PLC_WRITE_COMMANDS_TOPIC",   "plc_write_commands")
@@ -31,6 +32,7 @@ ON_OFF_STATUS              = os.getenv("ON_OFF_STATUS",              "on_off_sta
 
 # ─── FastAPI App ─────────────────────────────────────────────────
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ─── PostgreSQL Setup ──────────────────────────────────────────────
 DB_URL = os.getenv("DB_URL")
