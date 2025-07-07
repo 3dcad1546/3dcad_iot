@@ -10,6 +10,8 @@ from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 
 
+# Router for CRUD operations
+router = APIRouter(prefix="/api", tags=["CRUD"])
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.verify(plain, hashed)
@@ -209,6 +211,18 @@ def delete_user(username: str):
     return {"ok": True}
 
 
+# added a get api to fetch the predefined roles.
+@router.get("/roles", response_model=List[str])
+def get_user_roles():
+    try:
+        # Query enum values from PostgreSQL
+        cur.execute("SELECT unnest(enum_range(NULL::user_role)) AS role;")
+        roles = [row[0] for row in cur.fetchall()]
+        return roles
+    except Exception as e:
+        print("Error fetching roles:", e)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
 
 # 3) User access
 @app.post("/api/access", response_model=AccessEntry)
@@ -360,7 +374,9 @@ def delete_shift(shift_id: int):
         raise HTTPException(404, "Shift not found")
     return
 
-
+# ─── FastAPI + WS ────────────────────────────────────────────
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 class LoginReq(BaseModel):
@@ -583,7 +599,7 @@ async def logout(token: str = Header(...,alias="X-Auth-Token")):
     cur.execute("UPDATE sessions SET logout_ts=NOW() WHERE token=%s",(token,))
     cur.execute("""
       UPDATE operator_sessions SET logout_ts=NOW()
-       WHERE username=%s AND shutdown_ts IS NULL
+       WHERE username=%s AND logout_ts IS NULL
     """,(user,))
 
     # PLC write=2
