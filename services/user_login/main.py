@@ -374,9 +374,7 @@ def delete_shift(shift_id: int):
         raise HTTPException(404, "Shift not found")
     return
 
-# ─── FastAPI + WS ────────────────────────────────────────────
-app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
 
 
 class LoginReq(BaseModel):
