@@ -265,275 +265,215 @@
     },
     "io": {
         "read": {
-            "STARTPB-MAINCONTROLUNIT": {
-                "address": 1000,
-                "type": "coil"
-            },
-            "STOPPB-MAINCONTROLUNIT": {
-                "address": 1001,
-                "type": "coil"
-            },
-            "HOLDPB-MAINCONTROLUNIT": {
-                "address": 1002,
-                "type": "coil"
-            },
-            "RESTARTPB-MAINCONTROLUNIT": {
-                "address": 1003,
-                "type": "coil"
-            },
-            "EMERGENCYPB-MAINCONTROLUNIT": {
-                "address": 1004,
-                "type": "coil"
-            },
-            "STARTPB-INPUTCONVEYOR": {
-                "address": 1005,
-                "type": "coil"
-            },
-            "EMERGENCYPB-INPUTCONVEYOR": {
-                "address": 1006,
-                "type": "coil"
-            },
-            "AIRPRESSURESWITCH": {
-                "address": 1007,
-                "type": "coil"
-            },
-            "PARTPRESENTATROBOTGRIPPER-1(VACUUMFEEDBACK)": {
-                "address": 1016,
-                "type": "coil"
-            },
-            "PARTPRESENTATROBOTGRIPPER-2(VACUUMFEEDBACK)": {
-                "address": 1017,
-                "type": "coil"
-            },
-            "ROBOTGRIPPER-1UP/DWNCYLUPSIDEREEDSWITCH": {
-                "address": 1018,
-                "type": "coil"
-            },
-            "ROBOTGRIPPER-1UP/DWNCLYDWNSIDEREEDSWITCH": {
-                "address": 1019,
-                "type": "coil"
-            },
-            "ROBOTGRIPPER-2UP/DWNCYLUPSIDEREEDSWITCH": {
-                "address": 1020,
-                "type": "coil"
-            },
-            "ROBOTGRIPPER-2UP/DWNCLYDWNSIDEREEDSWITCH": {
-                "address": 1021,
-                "type": "coil"
-            },
-            "PARTPRESENTATROBOPICK-INPUTCONVEYOR": {
-                "address": 1022,
-                "type": "coil"
-            },
-            "PARTPRESNTATCONVEYOREND-INPUTCONVEYOR": {
-                "address": 1023,
-                "type": "coil"
-            },
-            "FIXTURE1(VACUUMFEEDBACK)1": {
-                "address": 1032,
-                "type": "coil"
-            },
-            "FIXTURE1(VACUUMFEEDBACK)2": {
-                "address": 1033,
-                "type": "coil"
-            },
-            "FIXTURE1PARTPRESENT-1": {
-                "address": 1034,
-                "type": "coil"
-            },
-            "FIXTURE1PARTPRESENT-2": {
-                "address": 1035,
-                "type": "coil"
-            },
-            "FIXTURE1PARTPRESENT-3": {
-                "address": 1036,
-                "type": "coil"
-            },
-            "FIXTURE1PARTPRESENT-4": {
-                "address": 1037,
-                "type": "coil"
-            },
-            "FIXTURE2(VACUUMFEEDBACK)1": {
-                "address": 1038,
-                "type": "coil"
-            },
-            "FIXTURE2(VACUUMFEEDBACK)2": {
-                "address": 1039,
-                "type": "coil"
-            },
-            "FIXTURE2PARTPRESENT-1": {
-                "address": 1040,
-                "type": "coil"
-            },
-            "FIXTURE2PARTPRESENT-2": {
-                "address": 1041,
-                "type": "coil"
-            },
-            "FIXTURE2PARTPRESENT-3": {
-                "address": 1042,
-                "type": "coil"
-            },
-            "FIXTURE2PARTPRESENT-4": {
-                "address": 1043,
-                "type": "coil"
-            },
-            "GANTRY1VACUUMFEEDBACK1": {
-                "address": 1048,
-                "type": "coil"
-            },
-            "GANTRY1VACUUMFEEDBACK2": {
-                "address": 1049,
-                "type": "coil"
-            },
-            "GANTRY1PARTPRESENT1": {
-                "address": 1050,
-                "type": "coil"
-            },
-            "GANTRY1PARTPRESENT2": {
-                "address": 1051,
-                "type": "coil"
-            },
-            "GANTRY1ROTARYCYL1ADVANCEREEDSWITCH": {
-                "address": 1052,
-                "type": "coil"
-            },
-            "GANTRY1ROTARYCYL1RETRACTREEDSWITCH": {
-                "address": 1053,
-                "type": "coil"
-            },
-            "GANTRY1ROTARYCYL2ADVANCEREEDSWITCH": {
-                "address": 1054,
-                "type": "coil"
-            },
-            "GANTRY1ROTARYCYL2RETRACTREEDSWITCH": {
-                "address": 1055,
-                "type": "coil"
-            },
-            "GANTRY1TOYOFWDLIMITSWITCH": {
-                "address": 1056,
-                "type": "coil"
-            },
-            "GANTRY1TOYOREVLIMITSWITCH": {
-                "address": 1057,
-                "type": "coil"
-            },
-            "GANTRY2VACUUMFEEDBACK1": {
-                "address": 1064,
-                "type": "coil"
-            },
-            "GANTRY2VACUUMFEEDBACK2": {
-                "address": 1065,
-                "type": "coil"
-            },
-            "GANTRY2PARTPRESENT1": {
-                "address": 1066,
-                "type": "coil"
-            },
-            "GANTRY2PARTPRESENT2": {
-                "address": 1067,
-                "type": "coil"
-            },
-            "GANTRY2ROTARYCYL1ADVANCEREEDSWITCH": {
-                "address": 1068,
-                "type": "coil"
-            },
-            "GANTRY2ROTARYCYL1RETRACTREEDSWITCH": {
-                "address": 1069,
-                "type": "coil"
-            },
-            "GANTRY2ROTARYCYL2ADVANCEREEDSWITCH": {
-                "address": 1070,
-                "type": "coil"
-            },
-            "GANTRY2ROTARYCYL2RETRACTREEDSWITCH": {
-                "address": 1071,
-                "type": "coil"
-            },
-            "GANTRY2TOYOFWDLIMITSWITCH": {
-                "address": 1072,
-                "type": "coil"
-            },
-            "GANTRY2TOYOREVLIMITSWITCH": {
-                "address": 1073,
-                "type": "coil"
-            },
-            "SAFETYDOOR-1": {
-                "address": 1080,
-                "type": "coil"
-            },
-            "SAFETYDOOR-2": {
-                "address": 1081,
-                "type": "coil"
-            },
-            "SAFETYDOOR-3": {
-                "address": 1082,
-                "type": "coil"
-            },
-            "SAFETYDOOR-4": {
-                "address": 1083,
-                "type": "coil"
-            },
-            "SAFETYDOOR-5": {
-                "address": 1084,
-                "type": "coil"
-            },
-            "SAFETYDOOR-6": {
-                "address": 1085,
-                "type": "coil"
-            },
-            "SAFETYDOOR-7": {
-                "address": 1086,
-                "type": "coil"
-            },
-            "SAFETYDOOR-8": {
-                "address": 1087,
-                "type": "coil"
-            },
-            "SAFETYDOOR-9": {
-                "address": 1088,
-                "type": "coil"
-            },
-            "SAFETYDOOR-10": {
-                "address": 1089,
-                "type": "coil"
-            },
-            "SAFETYDOOR-11": {
-                "address": 1090,
-                "type": "coil"
-            },
-            "SAFETYDOOR-12": {
-                "address": 1091,
-                "type": "coil"
-            },
-            "SAFETYDOOR-13": {
-                "address": 1092,
-                "type": "coil"
-            },
-            "SAFETYDOOR-14": {
-                "address": 1093,
-                "type": "coil"
-            },
-            "SAFETYDOOR-15": {
-                "address": 1094,
-                "type": "coil"
-            },
-            "SAFETYDOOR-16": {
-                "address": 1095,
-                "type": "coil"
-            },
-            "EMERGENCYPB-OUTPUTCONVEYOR": {
-                "address": 1096,
-                "type": "coil"
-            },
-            "UNLOADINGAREASENSOR-OUTPUTCONVEYOR": {
-                "address": 1097,
-                "type": "coil"
-            },
-            "GANTRYLOADINGAREASENSOR-OUTPUTCONVEYOR": {
-                "address": 1098,
-                "type": "coil"
-            }
-        }
+  "X020": {"address": 1000, "type": "coil"},
+  "X021": {"address": 1001, "type": "coil"},
+  "X022": {"address": 1002, "type": "coil"},
+  "X023": {"address": 1003, "type": "coil"},
+  "X024": {"address": 1004, "type": "coil"},
+  "X025": {"address": 1005, "type": "coil"},
+  "X026": {"address": 1006, "type": "coil"},
+  "X027": {"address": 1007, "type": "coil"},
+  "X028": {"address": 1008, "type": "coil"},
+  "X029": {"address": 1009, "type": "coil"},
+  "X02A": {"address": 1010, "type": "coil"},
+  "X02B": {"address": 1011, "type": "coil"},
+  "X02C": {"address": 1012, "type": "coil"},
+  "X02D": {"address": 1013, "type": "coil"},
+  "X02E": {"address": 1014, "type": "coil"},
+  "X02F": {"address": 1015, "type": "coil"},
+  "X0100": {"address": 1016, "type": "coil"},
+  "X0101": {"address": 1017, "type": "coil"},
+  "X0102": {"address": 1018, "type": "coil"},
+  "X0103": {"address": 1019, "type": "coil"},
+  "X0104": {"address": 1020, "type": "coil"},
+  "X0105": {"address": 1021, "type": "coil"},
+  "X0106": {"address": 1022, "type": "coil"},
+  "X0107": {"address": 1023, "type": "coil"},
+  "X0108": {"address": 1024, "type": "coil"},
+  "X0109": {"address": 1025, "type": "coil"},
+  "X010A": {"address": 1026, "type": "coil"},
+  "X010B": {"address": 1027, "type": "coil"},
+  "X010C": {"address": 1028, "type": "coil"},
+  "X010D": {"address": 1029, "type": "coil"},
+  "X010E": {"address": 1030, "type": "coil"},
+  "X010F": {"address": 1031, "type": "coil"},
+  "X0110": {"address": 1032, "type": "coil"},
+  "X0111": {"address": 1033, "type": "coil"},
+  "X0112": {"address": 1034, "type": "coil"},
+  "X0113": {"address": 1035, "type": "coil"},
+  "X0114": {"address": 1036, "type": "coil"},
+  "X0115": {"address": 1037, "type": "coil"},
+  "X0116": {"address": 1038, "type": "coil"},
+  "X0117": {"address": 1039, "type": "coil"},
+  "X0118": {"address": 1040, "type": "coil"},
+  "X0119": {"address": 1041, "type": "coil"},
+  "X011A": {"address": 1042, "type": "coil"},
+  "X011B": {"address": 1043, "type": "coil"},
+  "X011C": {"address": 1044, "type": "coil"},
+  "X011D": {"address": 1045, "type": "coil"},
+  "X011E": {"address": 1046, "type": "coil"},
+  "X011F": {"address": 1047, "type": "coil"},
+  "X0120": {"address": 1048, "type": "coil"},
+  "X0121": {"address": 1049, "type": "coil"},
+  "X0122": {"address": 1050, "type": "coil"},
+  "X0123": {"address": 1051, "type": "coil"},
+  "X0124": {"address": 1052, "type": "coil"},
+  "X0125": {"address": 1053, "type": "coil"},
+  "X0126": {"address": 1054, "type": "coil"},
+  "X0127": {"address": 1055, "type": "coil"},
+  "X0128": {"address": 1056, "type": "coil"},
+  "X0129": {"address": 1057, "type": "coil"},
+  "X012A": {"address": 1058, "type": "coil"},
+  "X012B": {"address": 1059, "type": "coil"},
+  "X012C": {"address": 1060, "type": "coil"},
+  "X012D": {"address": 1061, "type": "coil"},
+  "X012E": {"address": 1062, "type": "coil"},
+  "X012F": {"address": 1063, "type": "coil"},
+  "X0130": {"address": 1064, "type": "coil"},
+  "X0131": {"address": 1065, "type": "coil"},
+  "X0132": {"address": 1066, "type": "coil"},
+  "X0133": {"address": 1067, "type": "coil"},
+  "X0134": {"address": 1068, "type": "coil"},
+  "X0135": {"address": 1069, "type": "coil"},
+  "X0136": {"address": 1070, "type": "coil"},
+  "X0137": {"address": 1071, "type": "coil"},
+  "X0138": {"address": 1072, "type": "coil"},
+  "X0139": {"address": 1073, "type": "coil"},
+  "X013A": {"address": 1074, "type": "coil"},
+  "X013B": {"address": 1075, "type": "coil"},
+  "X013C": {"address": 1076, "type": "coil"},
+  "X013D": {"address": 1077, "type": "coil"},
+  "X013E": {"address": 1078, "type": "coil"},
+  "X013F": {"address": 1079, "type": "coil"},
+  "X0140": {"address": 1080, "type": "coil"},
+  "X0141": {"address": 1081, "type": "coil"},
+  "X0142": {"address": 1082, "type": "coil"},
+  "X0143": {"address": 1083, "type": "coil"},
+  "X0144": {"address": 1084, "type": "coil"},
+  "X0145": {"address": 1085, "type": "coil"},
+  "X0146": {"address": 1086, "type": "coil"},
+  "X0147": {"address": 1087, "type": "coil"},
+  "X0148": {"address": 1088, "type": "coil"},
+  "X0149": {"address": 1089, "type": "coil"},
+  "X014A": {"address": 1090, "type": "coil"},
+  "X014B": {"address": 1091, "type": "coil"},
+  "X014C": {"address": 1092, "type": "coil"},
+  "X014D": {"address": 1093, "type": "coil"},
+  "X014E": {"address": 1094, "type": "coil"},
+  "X014F": {"address": 1095, "type": "coil"},
+  "X0150": {"address": 1096, "type": "coil"},
+  "X0151": {"address": 1097, "type": "coil"},
+  "X0152": {"address": 1098, "type": "coil"},
+  "X0153": {"address": 1099, "type": "coil"},
+  "X0154": {"address": 1100, "type": "coil"},
+  "X0155": {"address": 1101, "type": "coil"},
+  "X0156": {"address": 1102, "type": "coil"},
+  "X0157": {"address": 1103, "type": "coil"},
+  "X0158": {"address": 1104, "type": "coil"},
+  "X0159": {"address": 1105, "type": "coil"},
+  "X015A": {"address": 1106, "type": "coil"},
+  "X015B": {"address": 1107, "type": "coil"},
+  "X015C": {"address": 1108, "type": "coil"},
+  "X015D": {"address": 1109, "type": "coil"},
+  "X015E": {"address": 1110, "type": "coil"},
+  "Y030": {"address": 2000, "type": "coil"},
+  "Y031": {"address": 2001, "type": "coil"},
+  "Y032": {"address": 2002, "type": "coil"},
+  "Y033": {"address": 2003, "type": "coil"},
+  "Y034": {"address": 2004, "type": "coil"},
+  "Y035": {"address": 2005, "type": "coil"},
+  "Y036": {"address": 2006, "type": "coil"},
+  "Y037": {"address": 2007, "type": "coil"},
+  "Y038": {"address": 2008, "type": "coil"},
+  "Y039": {"address": 2009, "type": "coil"},
+  "Y03A": {"address": 2010, "type": "coil"},
+  "Y03B": {"address": 2011, "type": "coil"},
+  "Y03C": {"address": 2012, "type": "coil"},
+  "Y03D": {"address": 2013, "type": "coil"},
+  "Y03E": {"address": 2014, "type": "coil"},
+  "Y03F": {"address": 2015, "type": "coil"},
+  "Y0100": {"address": 2016, "type": "coil"},
+  "Y0101": {"address": 2017, "type": "coil"},
+  "Y0102": {"address": 2018, "type": "coil"},
+  "Y0103": {"address": 2019, "type": "coil"},
+  "Y0104": {"address": 2020, "type": "coil"},
+  "Y0105": {"address": 2021, "type": "coil"},
+  "Y0106": {"address": 2022, "type": "coil"},
+  "Y0107": {"address": 2023, "type": "coil"},
+  "Y0108": {"address": 2024, "type": "coil"},
+  "Y0109": {"address": 2025, "type": "coil"},
+  "Y010A": {"address": 2026, "type": "coil"},
+  "Y010B": {"address": 2027, "type": "coil"},
+  "Y010C": {"address": 2028, "type": "coil"},
+  "Y010D": {"address": 2029, "type": "coil"},
+  "Y010E": {"address": 2030, "type": "coil"},
+  "Y010F": {"address": 2031, "type": "coil"},
+  "Y0110": {"address": 2032, "type": "coil"},
+  "Y0111": {"address": 2033, "type": "coil"},
+  "Y0112": {"address": 2034, "type": "coil"},
+  "Y0113": {"address": 2035, "type": "coil"},
+  "Y0114": {"address": 2036, "type": "coil"},
+  "Y0115": {"address": 2037, "type": "coil"},
+  "Y0116": {"address": 2038, "type": "coil"},
+  "Y0117": {"address": 2039, "type": "coil"},
+  "Y0118": {"address": 2040, "type": "coil"},
+  "Y0119": {"address": 2042, "type": "coil"},
+  "Y011A": {"address": 2042, "type": "coil"},
+  "Y011B": {"address": 2043, "type": "coil"},
+  "Y011C": {"address": 2044, "type": "coil"},
+  "Y011D": {"address": 2045, "type": "coil"},
+  "Y011E": {"address": 2046, "type": "coil"},
+  "Y011F": {"address": 2047, "type": "coil"},
+  "Y0120": {"address": 2048, "type": "coil"},
+  "Y0121": {"address": 2049, "type": "coil"},
+  "Y0122": {"address": 2050, "type": "coil"},
+  "Y0123": {"address": 2052, "type": "coil"},
+  "Y0124": {"address": 2052, "type": "coil"},
+  "Y0125": {"address": 2053, "type": "coil"},
+  "Y0126": {"address": 2054, "type": "coil"},
+  "Y0127": {"address": 2055, "type": "coil"},
+  "Y0128": {"address": 2056, "type": "coil"},
+  "Y0129": {"address": 2057, "type": "coil"},
+  "Y012A": {"address": 2058, "type": "coil"},
+  "Y012B": {"address": 2059, "type": "coil"},
+  "Y012C": {"address": 2060, "type": "coil"},
+  "Y012D": {"address": 2062, "type": "coil"},
+  "Y012E": {"address": 2062, "type": "coil"},
+  "Y012F": {"address": 2063, "type": "coil"},
+  "Y0130": {"address": 2064, "type": "coil"},
+  "Y0131": {"address": 2065, "type": "coil"},
+  "Y0132": {"address": 2066, "type": "coil"},
+  "Y0133": {"address": 2067, "type": "coil"},
+  "Y0134": {"address": 2068, "type": "coil"},
+  "Y0135": {"address": 2069, "type": "coil"},
+  "Y0136": {"address": 2070, "type": "coil"},
+  "Y0137": {"address": 2072, "type": "coil"},
+  "Y0138": {"address": 2072, "type": "coil"},
+  "Y0139": {"address": 2073, "type": "coil"},
+  "Y013A": {"address": 2074, "type": "coil"},
+  "Y013B": {"address": 2075, "type": "coil"},
+  "Y013C": {"address": 2076, "type": "coil"},
+  "Y013D": {"address": 2077, "type": "coil"},
+  "Y013E": {"address": 2078, "type": "coil"},
+  "Y013F": {"address": 2079, "type": "coil"},
+  "Y0140": {"address": 2080, "type": "coil"},
+  "Y0141": {"address": 2081, "type": "coil"},
+  "Y0142": {"address": 2082, "type": "coil"},
+  "Y0143": {"address": 2083, "type": "coil"},
+  "Y0144": {"address": 2084, "type": "coil"},
+  "Y0145": {"address": 2085, "type": "coil"},
+  "Y0146": {"address": 2086, "type": "coil"},
+  "Y0147": {"address": 2087, "type": "coil"},
+  "Y0148": {"address": 2088, "type": "coil"},
+  "Y0149": {"address": 2089, "type": "coil"},
+  "Y014A": {"address": 2090, "type": "coil"},
+  "Y014B": {"address": 2092, "type": "coil"},
+  "Y014C": {"address": 2092, "type": "coil"},
+  "Y014D": {"address": 2093, "type": "coil"},
+  "Y014E": {"address": 2094, "type": "coil"},
+  "Y014F": {"address": 2095, "type": "coil"}
+}
+
     },
     "robo": {
         "read": {

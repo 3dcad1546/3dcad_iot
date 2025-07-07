@@ -48,7 +48,7 @@ class LoginReq(BaseModel):
             raise ValueError('Role must be one of operator, admin, engineer')
         return v
 
-<<<<<<< HEAD
+
 def require_token(token: str = Header(None, alias="X-Auth-Token")):
     if not token or token not in session_store:
         raise HTTPException(401, "Invalid or missing auth token")
@@ -122,9 +122,7 @@ def verify(sess=Depends(require_token)):
     return {"username": sess["username"], "role": sess["role"]}
 
 # ─── WebSocket manager ───────────────────────────────────────────────────────
-=======
-# ─── WebSocket Connection Manager ───────────────────────────────────────
->>>>>>> c135ddc98651c7cc1fdb70e57fc108783fb7aa14
+
 class ConnectionManager:
     def __init__(self):
         self.conns: set[WebSocket] = set()

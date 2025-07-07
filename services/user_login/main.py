@@ -129,6 +129,7 @@ class ShiftOut(ShiftIn):
 
 # ─── FastAPI + WS ────────────────────────────────────────────
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 # ─── CRUD Endpoints ──────────────────────────────────────────────────────────────
@@ -377,6 +378,7 @@ def delete_shift(shift_id: int):
 
 # ─── FastAPI + WS ────────────────────────────────────────────
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 class LoginReq(BaseModel):
     Username: str
