@@ -184,6 +184,7 @@ def create_user(u: UserCreate):
 
 @app.get("/api/users/{username}", response_model=UserOut)
 def read_user(username: str):
+    print("cominginside")
     cur.execute("SELECT id,first_name,last_name,username,role FROM users WHERE username=%s", (username,))
     row = cur.fetchone()
     if not row:
