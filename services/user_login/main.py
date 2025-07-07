@@ -10,8 +10,6 @@ from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 
 
-# Router for CRUD operations
-router = APIRouter(prefix="/api", tags=["CRUD"])
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.verify(plain, hashed)
@@ -210,21 +208,6 @@ def delete_user(username: str):
         raise HTTPException(404, "User not found")
     return {"ok": True}
 
-
-# added a get api to fetch the predefined roles.
-@router.get("/roles", response_model=List[str])
-def get_user_roles():
-    try:
-        
-        # Query enum values from PostgreSQL
-        cur.execute("SELECT unnest(enum_range(NULL::user_role)) AS role;")
-        roles = [row[0] for row in cur.fetchall()]
-
-        return roles
-
-    except Exception as e:
-        print("Error fetching roles:", e)
-        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
 # 3) User access
