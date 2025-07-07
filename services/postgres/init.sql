@@ -128,7 +128,10 @@ CREATE TABLE IF NOT EXISTS error_logs (
 
 -- 10) Local users for admin & engineer
 CREATE TABLE IF NOT EXISTS users (
-  username      TEXT       PRIMARY KEY,
+  id            UUID       PRIMARY KEY,
+  first_name    TEXT       NOT NULL,
+  last_name     TEXT       NOT NULL,
+  username      TEXT       UNIQUE NOT NULL,
   password_hash TEXT       NOT NULL,
   role          user_role  NOT NULL
 );
