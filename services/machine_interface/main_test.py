@@ -7,9 +7,11 @@ PLC_PORT = 502
 
 async def main():
     client = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
+    print(client,"clientttttt")
 
     # Establish connection
     await client.connect()
+    print("Client connection status:", client.connected)
     if not client.connected:
         print("❌ Could not connect to PLC.")
         return

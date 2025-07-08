@@ -186,6 +186,7 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
         return out
 
     config_data = read_json_file("register_map.json")
+    print(config_data,"configgggggggggg")
     if not config_data:
         logging.info("Error: Could not read register map configuration.")
         return out
@@ -688,6 +689,7 @@ async def main():
         logger.warning("🔧 SIMULATOR MODE ENABLED — skipping real PLC connect")
     else:     
         client = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
+        print(client,"clientttt")
 
         logger.info(f"Connecting to PLC at {PLC_HOST}:{PLC_PORT} for all tasks...")
         await client.connect()
