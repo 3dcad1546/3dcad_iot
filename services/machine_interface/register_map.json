@@ -1,4 +1,90 @@
 {
+    "stations": {
+        "loading_station": {
+        "status_1":         [2600, 0],
+        "status_2":         [2600, 1],
+        "barcode_block_1": [2000, 20],
+        "barcode_block_2": [2200, 20]
+        },
+        "trace_interlock": {
+        "status_1":         [2602, 1],
+        "status_2":         [2602, 2],
+        "barcode_block_1": [2000, 20],
+        "barcode_block_2": [2200, 20]
+        },
+        "process_control": {
+        "status_1":         [2601, 1],
+        "status_2":         [2601, 2],
+        "barcode_block_1": [2000, 20],
+        "barcode_block_2": [2200, 20]
+        },
+        "mes_process": {
+        "status_1":         [2603, 1],
+        "status_2":         [2603, 2],
+        "barcode_block_1": [2000, 20],
+        "barcode_block_2": [2200, 20]
+        },
+        "xbot_1": {
+        "status_1":         [2600, 2],
+        "status_2":         [2600, 3],
+        "barcode_block_1": [2020, 20],
+        "barcode_block_2": [2220, 20]
+        },
+        "vision_1": {
+        "status_1":         [2600, 4],
+        "status_2":         [2600, 5],
+        "barcode_block_1": [2020, 20],
+        "barcode_block_2": [2220, 20]
+        },
+        "gantry_1": {
+        "status_1":         [2600, 6],
+        "status_2":         [2600, 7],
+        "barcode_block_1": [2040, 20],
+        "barcode_block_2": [2240, 20]
+        },
+        "xbot_2": {
+        "status_1":         [2600, 8],
+        "status_2":         [2600, 9],
+        "barcode_block_1": [2060, 20],
+        "barcode_block_2": [2260, 20]
+        },
+        "vision_2": {
+        "status_1":         [2600, 10],
+        "status_2":         [2600, 11],
+        "barcode_block_1": [2060, 20],
+        "barcode_block_2": [2260, 20]
+        },
+        "gantry_2": {
+        "status_1":         [2600, 12],
+        "status_2":         [2600, 13],
+        "barcode_block_1": [2080, 20],
+        "barcode_block_2": [2280, 20]
+        },
+        "vision_3": {
+        "status_1":         [2600, 14],
+        "status_2":         [2600, 15],
+        "barcode_block_1": [2080, 20],
+        "barcode_block_2": [2280, 20]
+        },
+        "trace_upload": {
+        "status_1":         [2604, 1],
+        "status_2":         [2604, 2],
+        "barcode_block_1": [2080, 20],
+        "barcode_block_2": [2280, 20]
+        },
+        "mes_upload": {
+        "status_1":         [2605, 1],
+        "status_2":         [2605, 2],
+        "barcode_block_1": [2080, 20],
+        "barcode_block_2": [2280, 20]
+        },
+        "unload_station": {
+        "status_1":         [2600, 16],
+        "status_2":         [2600, 17],
+        "barcode_block_1": [2120, 20],
+        "barcode_block_2": [2320, 20]
+        }
+    },
     "startup": {
         "read": {
             "INPUT_CONVEYOR_MODE_POS": 1000,
@@ -244,18 +330,9 @@
             "NOK": 3001,
             "NR": 3002,
             "SKIP": 3004,
-            "BARCODE_1": 3100,
-            "BARCODE_2": 3116,
-            "BARCODE_3": 3132,
-            "BARCODE_4": 3148,
             "ALARM": 3200,
             "RUNNING_MSG": 3201,
             "PLC_KEEPALIVE_BIT": 3202,
-            "VISION_COMM_OK": 3203,
-            "SCARRA_ROBOT_COMM_OK": 3204,
-            "LCMR_COMM_OK": 3205,
-            "GANTRY_1": 3206,
-            "GANTRY_2": 3207,
             "START_ACTIVE": 3301,
             "STOP_REQ":      3302
         },
