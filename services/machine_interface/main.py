@@ -411,10 +411,11 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
        - Always include both bits + last-read barcodes in the final grouped machine_status
     2) Publish one JSON of all stations to MACHINE_STATUS_TOPIC
     """
-    cfg    = read_json_file("register_map.json")
+    cfg      = read_json_file("register_map.json")
     stations = cfg.get("stations", {})
 
     while True:
+        # ensure PLC connection
         if not client.connected:
             logging.warning("❌ PLC not connected—reconnecting…")
             try:
@@ -429,6 +430,17 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
 
+        # read auto/manual mode bit
+        try:
+            rr_mode = await client.read_holding_registers(MODE_REGISTER, 1)
+            if not rr_mode.isError() and rr_mode.registers:
+                mode_auto = bool(rr_mode.registers[0])
+            else:
+                mode_auto = False
+        except Exception as e:
+            logging.error(f"Error reading MODE_REGISTER {MODE_REGISTER}: {e}")
+            mode_auto = False
+
         # fetch current operator if available
         try:
             resp = requests.get(f"{USER_LOGIN_URL}/api/current_operator", timeout=1)
@@ -439,23 +451,26 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
         machine_payload: Dict[str, dict] = {}
 
+        # helper to read a single bit
+        async def read_bit(reg, bit):
+            rr = await client.read_holding_registers(reg, 1)
+            if rr.isError() or not rr.registers:
+                return 0
+            return (rr.registers[0] >> bit) & 1
+
         for name, spec in stations.items():
             # unpack registers/bits
-            r1, b1 = spec["status_1"]
-            r2, b2 = spec["status_2"]
-            addr1, cnt1 = spec["barcode_block_1"]
-            addr2, cnt2 = spec["barcode_block_2"]
-
-            async def read_bit(reg, bit):
-                rr = await client.read_holding_registers(reg, 1)
-                if rr.isError() or not rr.registers:
-                    return 0
-                return (rr.registers[0] >> bit) & 1
+            r1, b1       = spec["status_1"]
+            r2, b2       = spec["status_2"]
+            addr1, cnt1  = spec["barcode_block_1"]
+            addr2, cnt2  = spec["barcode_block_2"]
 
             # 1) read both bits
-            flag1 = await read_bit(r1, b1)
-            flag2 = await read_bit(r2, b2)
+            # flag1 = await read_bit(r1, b1)
+            # flag2 = await read_bit(r2, b2)
 
+            flag1 = True
+            flag2 = True
             bc1 = None
             if flag1:
                 # 2) read barcode1, clear bit, emit trigger
@@ -466,7 +481,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     old = (await client.read_holding_registers(r1,1)).registers[0]
                     new = old & ~(1 << b1)
                     await client.write_register(r1, new)
-                    # send trigger event for this station
+                    # send trigger event
                     await aio_producer.send_and_wait(
                         KAFKA_TOPIC_BARCODE,
                         {
@@ -474,7 +489,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                           "barcode":   bc1,
                           "flag":      1,
                           "ts":        now,
-                          "operator":  operator
+                          "operator":  operator,
+                          "mode_auto": mode_auto,
                         }
                     )
 
@@ -487,6 +503,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     old = (await client.read_holding_registers(r2,1)).registers[0]
                     new = old & ~(1 << b2)
                     await client.write_register(r2, new)
+                    # send trigger event
                     await aio_producer.send_and_wait(
                         KAFKA_TOPIC_BARCODE,
                         {
@@ -494,18 +511,20 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                           "barcode":   bc2,
                           "flag":      2,
                           "ts":        now,
-                          "operator":  operator
+                          "operator":  operator,
+                          "mode_auto": mode_auto,
                         }
                     )
 
             # 3) stash into the big payload
             machine_payload[name] = {
-                "status_1": flag1,
-                "status_2": flag2,
-                "barcode1": bc1,
-                "barcode2": bc2,
-                "operator": operator,
-                "ts":       now
+                "status_1":  flag1,
+                "status_2":  flag2,
+                "barcode1":  bc1,
+                "barcode2":  bc2,
+                "operator":  operator,
+                "mode_auto": mode_auto,
+                "ts":        now
             }
 
         # 4) publish the grouped machine_status
@@ -519,6 +538,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             logging.error("Kafka producer not ready; dropped machine_status")
 
         await asyncio.sleep(2)
+
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=5):
     """
     Periodically reads tags from each configured section and publishes them
