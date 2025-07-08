@@ -49,6 +49,8 @@ KAFKA_TOPIC_ON_OFF_STATUS = os.getenv("ON_OFF_TOPIC", "on_off_status")
 BARCODE_FLAG_1 = 3303
 BARCODE_FLAG_2 = 3304
 
+LOGIN_REGISTER   = int(os.getenv("LOGIN_REGISTER", "3309"))
+
 
 # Mode 1 → Auto and 0 → Manual
 MODE_REGISTER    = int(os.getenv("MODE_REGISTER", "1001"))
@@ -305,8 +307,8 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         print("Error: Could not read register map for writing.")
         return
     
-    TAG_MAP = config_data.get("tags", config_data)
-    section_data = TAG_MAP.get(section)
+    
+    section_data = config_data.get(section, {})
     if not section_data:
         response_payload["message"] = f"Section '{section}' not found in register map for writing."
         if aio_producer:

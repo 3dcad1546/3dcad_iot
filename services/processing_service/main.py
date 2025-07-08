@@ -1,19 +1,40 @@
-import os, asyncio, json, signal, uuid, requests, httpx
+import os
+import asyncio
+import json
+import signal
+import uuid
+import pathlib
+
+import requests
+import httpx
 from datetime import datetime
+
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import NoBrokersAvailable
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 # ─── Configuration ────────────────────────────────────────────────
-KAFKA_BROKER       = os.getenv("KAFKA_BROKER", "kafka:9092")
-RAW_TOPIC          = os.getenv("RAW_KAFKA_TOPIC", "raw_server_data")
-TRIGGER_TOPIC      = os.getenv("TRIGGER_KAFKA_TOPIC", "trigger_events")
-PLC_WRITE_TOPIC    = os.getenv("PLC_WRITE_COMMANDS_TOPIC", "plc_write_commands")
-CYCLE_EVENT_TOPIC  = os.getenv("CYCLE_EVENT_TOPIC", "cycle_event")
-CONSUMER_GROUP     = os.getenv("CONSUMER_GROUP", "processing_service")
-DB_URL             = os.getenv("DB_URL")
-USER_LOGIN_URL     = os.getenv("USER_LOGIN_URL")
+KAFKA_BROKER            = os.getenv("KAFKA_BROKER", "kafka:9092")
+RAW_TOPIC               = os.getenv("RAW_KAFKA_TOPIC", "raw_server_data")
+TRIGGER_TOPIC           = os.getenv("TRIGGER_KAFKA_TOPIC", "trigger_events")
+PLC_WRITE_TOPIC         = os.getenv("PLC_WRITE_COMMANDS_TOPIC", "plc_write_commands")
+CYCLE_EVENT_TOPIC       = os.getenv("CYCLE_EVENT_TOPIC", "cycle_event")
+CONSUMER_GROUP          = os.getenv("CONSUMER_GROUP", "processing_service")
+
+DB_URL                  = os.getenv("DB_URL")
+USER_LOGIN_URL          = os.getenv("USER_LOGIN_URL")
+
+# path to your register_map.json (which must include a "status_bits" → "write" section)
+REGISTER_MAP_PATH       = os.getenv("REGISTER_MAP_PATH", "register_map.json")
+
+# ─── Load register_map.json ───────────────────────────────────────
+try:
+    with open(pathlib.Path(__file__).parent / REGISTER_MAP_PATH) as f:
+        REGISTER_MAP = json.load(f)
+except Exception as e:
+    raise RuntimeError(f"couldn't load register_map.json: {e}")
 
 # ─── Postgres setup ───────────────────────────────────────────────
 pg_conn = psycopg2.connect(DB_URL)
@@ -24,7 +45,10 @@ pg_cur  = pg_conn.cursor(cursor_factory=RealDictCursor)
 pg_cur.execute("""
 CREATE TABLE IF NOT EXISTS mes_trace_history (
   id SERIAL PRIMARY KEY,
-  serial TEXT, step TEXT NOT NULL, response_json JSONB NOT NULL, ts TIMESTAMP DEFAULT NOW()
+  serial TEXT,
+  step   TEXT NOT NULL,
+  response_json JSONB NOT NULL,
+  ts TIMESTAMP DEFAULT NOW()
 );
 """)
 pg_cur.execute("""
@@ -53,10 +77,10 @@ CREATE TABLE IF NOT EXISTS cycle_event (
 def load_machine_config(machine_id: str):
     pg_cur.execute("""
       SELECT
-        mes_process_control_url AS pc_url,
+        mes_process_control_url    AS pc_url,
         mes_upload_url,
-        trace_process_control_url AS trace_pc_url,
-        trace_interlock_url       AS trace_il_url,
+        trace_process_control_url  AS trace_pc_url,
+        trace_interlock_url        AS trace_il_url,
         is_mes_enabled,
         is_trace_enabled
       FROM machine_config
@@ -67,8 +91,8 @@ def load_machine_config(machine_id: str):
         raise RuntimeError(f"No machine_config for {machine_id}")
     return row
 
-MACHINE_ID  = os.getenv("MACHINE_ID")
-machine_cfg = load_machine_config(MACHINE_ID)
+MACHINE_ID   = os.getenv("MACHINE_ID")
+machine_cfg  = load_machine_config(MACHINE_ID)
 
 # ─── Kafka clients ─────────────────────────────────────────────────
 kafka_consumer = None
@@ -108,7 +132,6 @@ async def shutdown():
     pg_conn.close()
     print("[Processing] shut down cleanly")
 
-
 # ─── Helpers ───────────────────────────────────────────────────────
 async def get_current_operator(token: str) -> str:
     url = f"{USER_LOGIN_URL}/api/verify"
@@ -131,15 +154,14 @@ async def publish_cycle_event(cycle_id: str, stage: str):
       (cycle_id, stage)
     )
 
-
 # ─── Business logic ────────────────────────────────────────────────
 async def process_event(topic: str, msg: dict) -> dict:
     if topic != TRIGGER_TOPIC:
         return {"emit": False}
 
-    barcode = msg["barcode"]
-    is_auto = msg.get("mode_auto", False)
-    token   = msg.get("token")
+    barcode  = msg["barcode"]
+    is_auto  = msg.get("mode_auto", False)
+    token    = msg.get("token")
     operator = await get_current_operator(token) if token else None
 
     # 1) start cycle
@@ -163,26 +185,31 @@ async def process_event(topic: str, msg: dict) -> dict:
     # 2) manual override
     if not is_auto or operator is None:
         await publish_cycle_event(cycle_id, "ManualMode")
-        return {"emit":True, "command":{
-          "section":"manual",
-          "tag_name":"ManualMode",
-          "value":1,
-          "request_id":cycle_id
-        }}
+        return {
+            "emit": True,
+            "command": {
+                "section": "manual",
+                "tag_name": "ManualMode",
+                "value": 1,
+                "request_id": cycle_id
+            }
+        }
 
     # 3) MES PC
     if machine_cfg["is_mes_enabled"]:
         try:
             r = requests.post(machine_cfg["pc_url"], json={
-              "UniqueId":barcode,
-              "MachineId":MACHINE_ID,
-              "OperatorId":operator,
-              "Tools":[], "RawMaterials":[],
-              "CbsStreamName":os.getenv("CBS_STREAM_NAME","")
+              "UniqueId":     barcode,
+              "MachineId":    MACHINE_ID,
+              "OperatorId":   operator,
+              "Tools":        [], 
+              "RawMaterials": [],
+              "CbsStreamName": os.getenv("CBS_STREAM_NAME","")
             }, timeout=5)
-            if r.status_code==200 and r.json().get("IsSuccessful"):
+            if r.status_code == 200 and r.json().get("IsSuccessful"):
                 await publish_cycle_event(cycle_id, "MES")
-        except: pass
+        except:
+            pass
 
     # 4) Trace PC
     if machine_cfg["is_trace_enabled"]:
@@ -190,32 +217,37 @@ async def process_event(topic: str, msg: dict) -> dict:
             r = requests.get(machine_cfg["trace_pc_url"],
                              params={"serial":barcode,"serial_type":"band"},
                              timeout=3)
-            if r.status_code==200 and r.json().get("pass"):
+            if r.status_code == 200 and r.json().get("pass"):
                 await publish_cycle_event(cycle_id, "Process")
-        except: pass
+        except:
+            pass
 
         # 5) Trace Interlock
         try:
             r = requests.post(machine_cfg["trace_il_url"],
                               params={"serial":barcode,"serial_type":"band"},
                               timeout=3)
-            if r.status_code==200 and r.json().get("pass"):
+            if r.status_code == 200 and r.json().get("pass"):
                 await publish_cycle_event(cycle_id, "Trace")
-        except: pass
+        except:
+            pass
 
-    # 6) PLC write
+    # 6) PLC write — now using register_map.json for addresses & bits
+    status_map = REGISTER_MAP["status_bits"]["write"]
     plc_cmd = {
-      "section":"status_bits",
-      "tags":{
-        "MES":     1 if msg.get("MES") else 0,
-        "Process": 1 if msg.get("Process") else 0,
-        "Trace":   1 if msg.get("Trace") else 0
-      },
-      "request_id": cycle_id
+        "section": "status_bits",
+        "tags": {
+            tag_name: {
+                "address": addr,
+                "bit":      bit,
+                "value":    1 if msg.get(tag_name) else 0
+            }
+            for tag_name, (addr, bit) in status_map.items()
+        },
+        "request_id": cycle_id
     }
     await publish_cycle_event(cycle_id, "PLCWrite")
-    return {"emit":True, "command":plc_cmd}
-
+    return {"emit": True, "command": plc_cmd}
 
 # ─── Main loop ─────────────────────────────────────────────────────
 async def run():
@@ -243,7 +275,6 @@ async def run():
         print("[Processing] Error:", e)
     finally:
         await shutdown()
-
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
