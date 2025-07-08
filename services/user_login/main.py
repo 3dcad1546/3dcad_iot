@@ -8,6 +8,7 @@ from pymodbus.client.tcp import AsyncModbusTcpClient
 from passlib.hash import bcrypt
 from typing import List
 from fastapi.middleware.cors import CORSMiddleware
+from pytz import timezone
 
 
 # Router for CRUD operations
@@ -420,7 +421,9 @@ async def ws_login_status(ws: WebSocket):
 
 # ─── shift lookup ──────────────────────────────────────────────
 def current_shift():
-    now = datetime.now().time()
+    # now = datetime.now().time()
+    now = datetime.now(timezone("Asia/Kolkata")).time()
+    print(now,"nowww")
     cur.execute("SELECT id,name,start_time,end_time FROM shift_master;")
     for sid,name,st,et in cur.fetchall():
         if (st < et and st <= now < et) or (st > et and (now >= st or now < et)):
@@ -536,6 +539,7 @@ async def login(req: LoginReq):
 
     # 4) determine current shift
     sid, shift_name, st, et = current_shift()
+    print(sid,"sid", shift_name,"shift_name", st,"st", et,"ett")
     if not sid:
         raise HTTPException(400, "No active shift")
 

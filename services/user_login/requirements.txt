@@ -7,3 +7,4 @@ pymodbus>=3.1.0
 asyncio-mqtt
 pydantic
 passlib[bcrypt]
+pytz
