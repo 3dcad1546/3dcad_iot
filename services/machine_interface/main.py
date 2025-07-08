@@ -1,4 +1,5 @@
-import os,json,time,asyncio,logging,requests
+import os,json,time,asyncio,logging,requests,struct
+from typing import Dict
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
 from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
@@ -47,8 +48,9 @@ KAFKA_TOPIC_ON_OFF_STATUS = os.getenv("ON_OFF_TOPIC", "on_off_status")
 # Barcode related registers (No change)
 BARCODE_FLAG_1 = 3303
 BARCODE_FLAG_2 = 3304
-BARCODE_1_BLOCK = (3100, 16)
-BARCODE_2_BLOCK = (3132, 16)
+
+LOGIN_REGISTER   = int(os.getenv("LOGIN_REGISTER", "3309"))
+
 
 # Mode 1 → Auto and 0 → Manual
 MODE_REGISTER    = int(os.getenv("MODE_REGISTER", "1001"))
@@ -305,8 +307,8 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         print("Error: Could not read register map for writing.")
         return
     
-    TAG_MAP = config_data.get("tags", config_data)
-    section_data = TAG_MAP.get(section)
+    
+    section_data = config_data.get(section, {})
     if not section_data:
         response_payload["message"] = f"Section '{section}' not found in register map for writing."
         if aio_producer:
@@ -402,159 +404,120 @@ def decode_string(words):
 
 async def read_specific_plc_data(client: AsyncModbusTcpClient):
     """
-    Reads specific barcode and machine status (13-bit array) data.
+    1) For each station in register_map.json:
+       - Read its status_1 and status_2 bits
+       - If bit==1: read the corresponding barcode block, clear the bit, emit trigger_events
+       - Always include both bits + last-read barcodes in the final grouped machine_status
+    2) Publish one JSON of all stations to MACHINE_STATUS_TOPIC
     """
+    cfg    = read_json_file("register_map.json")
+    stations = cfg.get("stations", {})
+
     while True:
         if not client.connected:
-            logging.warning("❌ Async client not connected for specific data read. Attempting reconnect...")
+            logging.warning("❌ PLC not connected—reconnecting…")
             try:
                 await client.connect()
                 if not client.connected:
-                    logging.warning("❌ Could not reconnect to PLC for specific data read. Waiting...")
                     await asyncio.sleep(5)
                     continue
-                else:
-                    logging.warning("✅ Reconnected to PLC for specific data read.")
             except Exception as e:
-                logging.error(f"Error during reconnection attempt for specific data: {e}. Waiting...")
+                logging.error(f"PLC reconnect error: {e}")
                 await asyncio.sleep(5)
                 continue
 
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+        # fetch current operator if available
         try:
             resp = requests.get(f"{USER_LOGIN_URL}/api/current_operator", timeout=1)
             resp.raise_for_status()
-            operator = resp.json()["username"]
-        except Exception:
+            operator = resp.json().get("username")
+        except:
             operator = None
 
-        try:
-            # Barcode Flags (No change in logic)
-            flags_response = await client.read_holding_registers(address=BARCODE_FLAG_1, count=2)
-            # ─── Read Auto/Manual mode
-            mode_rr = await client.read_holding_registers(address=MODE_REGISTER, count=1)
-            
-            if mode_rr.isError() or not mode_rr.registers:
-                is_auto = False
-            else:
-                is_auto = (mode_rr.registers[0] == 1)
-                # ── Read START_ACTIVE & STOP_REQ ──
-                sa_rr = await client.read_holding_registers(address=3301, count=1)
-                sr_rr = await client.read_holding_registers(address=3302, count=1)
-                start_active = (not sa_rr.isError()) and bool(sa_rr.registers[0])
-                # STOP_REQ is “pressed” when the bit is LOW (0)
-                stop_req     = (not sr_rr.isError()) and (sr_rr.registers[0] == 0)
+        machine_payload: Dict[str, dict] = {}
 
-                # Override auto if STOP_REQ pressed
-                effective_auto = is_auto and (not stop_req)
-                if aio_producer:
-                    await aio_producer.send(KAFKA_TOPIC_MANUAL_STATUS, {
-                    "mode_auto":     effective_auto,
-                    "start_active":  start_active,
-                    "stop_req":      stop_req,
-                    "ts":            now
-                    })
+        for name, spec in stations.items():
+            # unpack registers/bits
+            r1, b1 = spec["status_1"]
+            r2, b2 = spec["status_2"]
+            addr1, cnt1 = spec["barcode_block_1"]
+            addr2, cnt2 = spec["barcode_block_2"]
 
-            if not flags_response.isError():
-                flag1, flag2 = flags_response.registers
+            async def read_bit(reg, bit):
+                rr = await client.read_holding_registers(reg, 1)
+                if rr.isError() or not rr.registers:
+                    return 0
+                return (rr.registers[0] >> bit) & 1
 
+            # 1) read both bits
+            flag1 = await read_bit(r1, b1)
+            flag2 = await read_bit(r2, b2)
 
-                if flag1 == 1:
-                    words_response = await client.read_holding_registers(*BARCODE_1_BLOCK)
-                    if not words_response.isError():
-                        barcode1 = decode_string(words_response.registers)
-                        if aio_producer:
-                            # ─── UPDATED: include is_auto in your trigger event
-                            await aio_producer.send("trigger_events", {
-                                "barcode":   barcode1,
-                                "token": os.getenv("CURRENT_TOKEN"),
-                                "camera":    "1",
-                                "ts":        now,
-                                "mode_auto": is_auto,
-                                "machine_id":   os.getenv("MACHINE_ID"),
-                                "operator":     current_token,    
-                                "cbs_stream":   CBS_STREAM_NAME
-                            })
-                        await client.write_register(BARCODE_FLAG_1, 0)
-                        logging.info(f"Barcode 1 ({barcode1}) triggered.")
-                    else:
-                        logging.error(f"Error reading BARCODE_1_BLOCK: {words_response}")
-                
-                if flag2 == 1:
-                    words_response = await client.read_holding_registers(*BARCODE_2_BLOCK)
-                    if not words_response.isError():
-                        barcode2 = decode_string(words_response.registers)
-                        if aio_producer:
-                            await aio_producer.send("trigger_events", {
-                                "barcode":   barcode2,
-                                "camera":    "2",
-                                "ts":        now,
-                                "mode_auto": is_auto,
-                                "machine_id":   os.getenv("MACHINE_ID"),
-                                "operator":     os.getenv("CURRENT_OPERATOR"),    # or however you make the logged‐in user available
-                                "cbs_stream":   CBS_STREAM_NAME
-                            })
-                        await client.write_register(BARCODE_FLAG_2, 0)
-                        print(f"Barcode 2 ({barcode2}) triggered.")
-                    else:
-                        print(f"Error reading BARCODE_2_BLOCK: {words_response}")
-            else:
-                print("Error reading barcode flags:", flags_response)
+            bc1 = None
+            if flag1:
+                # 2) read barcode1, clear bit, emit trigger
+                rr = await client.read_holding_registers(addr1, cnt1)
+                if not rr.isError() and rr.registers:
+                    bc1 = decode_string(rr.registers)
+                    # clear the bit
+                    old = (await client.read_holding_registers(r1,1)).registers[0]
+                    new = old & ~(1 << b1)
+                    await client.write_register(r1, new)
+                    # send trigger event for this station
+                    await aio_producer.send_and_wait(
+                        KAFKA_TOPIC_BARCODE,
+                        {
+                          "station":   name,
+                          "barcode":   bc1,
+                          "flag":      1,
+                          "ts":        now,
+                          "operator":  operator
+                        }
+                    )
 
-            # Machine Availability Status (13-bit array) - Publishes to KAFKA_TOPIC_MACHINE_STATUS
-            statuses_response = await client.read_holding_registers(address = STATUS_REGISTER, count= 2)
-            if not statuses_response.isError():
-                s1, s2 = statuses_response.registers
+            bc2 = None
+            if flag2:
+                rr = await client.read_holding_registers(addr2, cnt2)
+                if not rr.isError() and rr.registers:
+                    bc2 = decode_string(rr.registers)
+                    # clear the bit
+                    old = (await client.read_holding_registers(r2,1)).registers[0]
+                    new = old & ~(1 << b2)
+                    await client.write_register(r2, new)
+                    await aio_producer.send_and_wait(
+                        KAFKA_TOPIC_BARCODE,
+                        {
+                          "station":   name,
+                          "barcode":   bc2,
+                          "flag":      2,
+                          "ts":        now,
+                          "operator":  operator
+                        }
+                    )
 
-                bitfield1 = format(s1, "013b")[::-1]
-                bitfield2 = format(s2, "013b")[::-1]
+            # 3) stash into the big payload
+            machine_payload[name] = {
+                "status_1": flag1,
+                "status_2": flag2,
+                "barcode1": bc1,
+                "barcode2": bc2,
+                "operator": operator,
+                "ts":       now
+            }
 
-                status_set_1 = {STATUS_BITS[i]: int(bitfield1[i]) for i in range(min(len(STATUS_BITS), len(bitfield1)))}
-                status_set_2 = {STATUS_BITS[i]: int(bitfield2[i]) for i in range(min(len(STATUS_BITS), len(bitfield2)))}
+        # 4) publish the grouped machine_status
+        if aio_producer:
+            await aio_producer.send_and_wait(
+                KAFKA_TOPIC_MACHINE_STATUS,
+                value=machine_payload
+            )
+            logging.info(f"Published machine_status for {len(stations)} stations")
+        else:
+            logging.error("Kafka producer not ready; dropped machine_status")
 
-                bc1_response = await client.read_holding_registers(address= 2000, count=16)
-                bc2_response = await client.read_holding_registers(address= 2200, count=16)
-                bc3_response = await client.read_holding_registers(address= 3132, count=16)
-                bc4_response = await client.read_holding_registers(address= 3148, count=16)
-
-                barcode1 = decode_string(bc1_response.registers) if (not bc1_response.isError() and bc1_response.registers) else None
-                barcode2 = decode_string(bc2_response.registers) if (not bc2_response.isError() and bc2_response.registers) else None
-                barcode3 = decode_string(bc3_response.registers) if (not bc3_response.isError() and bc3_response.registers) else None
-                barcode4 = decode_string(bc4_response.registers) if (not bc4_response.isError() and bc4_response.registers) else None
-
-                status_set_1.update({
-                    "barcode1": barcode1,
-                    "barcode2": barcode2,
-                    "ts": now
-                })
-
-                status_set_2.update({
-                    "barcode3": barcode3,
-                    "barcode4": barcode4,
-                    "ts": now
-                })
-
-
-                # Publish to the specific MACHINE_STATUS topic
-                combined = {
-                    "set1": [ status_set_1 ],
-                    "set2": [ status_set_2 ],
-                }
-                if aio_producer:
-                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=combined)
-                    print(f"Published combined status: {combined}")
-            else:
-                print("Error reading status registers:", statuses_response)
-
-        except ModbusException as e:
-            print(f"❌ Modbus Exception during specific data read: {e}. Closing connection to force a reconnect...")
-            client.close()
-            await asyncio.sleep(1)
-        except Exception as e:
-            print(f"Error in specific data reading loop: {e}")
-        
         await asyncio.sleep(2)
-
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=5):
     """
     Periodically reads tags from each configured section and publishes them
