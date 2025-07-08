@@ -11,7 +11,6 @@ async def main():
 
     # Establish connection
     await client.connect()
-    print("Client connection status:", client.connected)
     if not client.connected:
         print("❌ Could not connect to PLC.")
         return

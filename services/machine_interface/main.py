@@ -353,7 +353,7 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         try:
             if bit_index is not None:
                 # read-modify-write single bit
-                rr = await client.read_holding_registers(register, count=1)
+                rr = await client.read_holding_registers(address=register, count=1)
                 if rr.isError() or not rr.registers:
                     raise ModbusException(f"Read failed at {register}: {rr}")
                 current = rr.registers[0]
@@ -412,7 +412,9 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     2) Publish one JSON of all stations to MACHINE_STATUS_TOPIC
     """
     cfg      = read_json_file("register_map.json")
+    print(cfg,"cfggggg")
     stations = cfg.get("stations", {})
+    print(stations,"stationsssssssss")
 
     while True:
         # ensure PLC connection
@@ -432,7 +434,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
         # read auto/manual mode bit
         try:
-            rr_mode = await client.read_holding_registers(MODE_REGISTER, 1)
+            rr_mode = await client.read_holding_registers(address=MODE_REGISTER, count=1)
+            print(rr_mode,"rr_mode111")
             if not rr_mode.isError() and rr_mode.registers:
                 mode_auto = bool(rr_mode.registers[0])
             else:
@@ -453,7 +456,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
         # helper to read a single bit
         async def read_bit(reg, bit):
-            rr = await client.read_holding_registers(reg, 1)
+            rr = await client.read_holding_registers(address=reg, count=1)
             if rr.isError() or not rr.registers:
                 return 0
             return (rr.registers[0] >> bit) & 1
@@ -474,11 +477,11 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             bc1 = None
             if flag1:
                 # 2) read barcode1, clear bit, emit trigger
-                rr = await client.read_holding_registers(addr1, cnt1)
+                rr = await client.read_holding_registers(address=addr1, count=cnt1)
                 if not rr.isError() and rr.registers:
                     bc1 = decode_string(rr.registers)
                     # clear the bit
-                    old = (await client.read_holding_registers(r1,1)).registers[0]
+                    old = (await client.read_holding_registers(address=r1,count=1)).registers[0]
                     new = old & ~(1 << b1)
                     await client.write_register(r1, new)
                     # send trigger event
@@ -496,11 +499,11 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
             bc2 = None
             if flag2:
-                rr = await client.read_holding_registers(addr2, cnt2)
+                rr = await client.read_holding_registers(address=addr2, count=cnt2)
                 if not rr.isError() and rr.registers:
                     bc2 = decode_string(rr.registers)
                     # clear the bit
-                    old = (await client.read_holding_registers(r2,1)).registers[0]
+                    old = (await client.read_holding_registers(address=r2,count=1)).registers[0]
                     new = old & ~(1 << b2)
                     await client.write_register(r2, new)
                     # send trigger event
