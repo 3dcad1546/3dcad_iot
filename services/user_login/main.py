@@ -437,7 +437,9 @@ async def shift_watcher():
         if sid:
             # compute next end
             today = datetime.now().date()
+            print(today,"todayy")
             end_dt = datetime.combine(today, et)
+            print(end_dt,"end_dt")
             if et < st:
                 end_dt += timedelta(days=1)
             await asyncio.sleep(max((end_dt - datetime.now()).total_seconds(), 0))
@@ -447,7 +449,7 @@ async def shift_watcher():
             await client.connect()
             prev = None
             if client.connected:
-                rr = await client.read_holding_registers(LOGIN_BIT,1)
+                rr = await client.read_holding_registers(address=LOGIN_BIT,count=1)
                 if not rr.isError():
                     prev = rr.registers[0]
             await client.close()
