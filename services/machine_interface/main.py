@@ -42,6 +42,7 @@ KAFKA_TOPIC_MANUAL_STATUS = os.getenv("MANUAL_STATUS_TOPIC", "manual_status")
 KAFKA_TOPIC_AUTO_STATUS = os.getenv("AUTO_STATUS_TOPIC", "auto_status")
 KAFKA_TOPIC_ROBO_STATUS = os.getenv("ROBO_STATUS_TOPIC", "robo_status")
 KAFKA_TOPIC_IO_STATUS = os.getenv("IO_STATUS_TOPIC", "io_status")
+KAFKA_TOPIC_ALARM_STATUS = os.getenv("ALARM_STATUS_TOPIC", "alarm_status")
 KAFKA_TOPIC_OEE_STATUS = os.getenv("OEE_STATUS_TOPIC", "oee_status") # New topic for OEE data
 KAFKA_TOPIC_ON_OFF_STATUS = os.getenv("ON_OFF_TOPIC", "on_off_status")
 
@@ -551,6 +552,7 @@ async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interv
         "startup": KAFKA_TOPIC_STARTUP_STATUS,
         "auto": KAFKA_TOPIC_AUTO_STATUS,
         "io": KAFKA_TOPIC_IO_STATUS,
+        "alarm": KAFKA_TOPIC_ALARM_STATUS,
         "robo": KAFKA_TOPIC_ROBO_STATUS,
         "manual": KAFKA_TOPIC_MANUAL_STATUS,
         "oee": KAFKA_TOPIC_OEE_STATUS,

@@ -27,6 +27,7 @@ MANUAL_STATUS              = os.getenv("MANUAL_STATUS",              "manual_sta
 AUTO_STATUS                = os.getenv("AUTO_STATUS",                "auto_status")
 ROBO_STATUS                = os.getenv("ROBO_STATUS",                "robo_status")
 IO_STATUS                  = os.getenv("IO_STATUS",                  "io_status")
+ALARM_STATUS               = os.getenv("ALARM_STATUS",               "alarm_status")
 OEE_STATUS                 = os.getenv("OEE_STATUS",                 "oee_status")
 ON_OFF_STATUS              = os.getenv("ON_OFF_STATUS",              "on_off_status")
 
@@ -420,6 +421,7 @@ WS_TOPICS = {
     "auto-status":    AUTO_STATUS,
     "robo-status":    ROBO_STATUS,
     "io-status":      IO_STATUS,
+    "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
     "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC
 }
