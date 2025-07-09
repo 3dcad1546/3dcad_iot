@@ -556,12 +556,69 @@ async def ws_stream(stream: str, ws: WebSocket, operator: str = Depends(websocke
     except WebSocketDisconnect:
         mgr.disconnect(stream, ws)
 
+async def consume_machine_status_and_populate_db():
+    # 1) Create consumer
+    consumer = AIOKafkaConsumer(
+        MACHINE_STATUS_TOPIC,
+        bootstrap_servers=KAFKA_BOOTSTRAP,
+        auto_offset_reset="earliest",
+        value_deserializer=lambda b: json.loads(b.decode())
+    )
+    await consumer.start()
+
+    try:
+        async for msg in consumer:
+            payload = msg.value
+            ts      = payload["ts"]
+            sets    = payload.get("sets", [])
+
+            for s in sets:
+                cycle_id = s["set_id"]               # e.g. "BC1|BC2"
+                bc1, bc2 = s["barcodes"]
+                prog     = s["progress"]             # { station: {status_1, status_2, ts}, … }
+
+                # 2) Upsert cycle_master
+                cur.execute("""
+                    INSERT INTO cycle_master(cycle_id, barcode, start_ts)
+                         VALUES (%s, %s, %s)
+                    ON CONFLICT (cycle_id) DO NOTHING
+                """, (cycle_id, f"{bc1}|{bc2}", s["created_ts"]))
+
+                # 3) For each station whose status_1 just turned ON and
+                #    there is no existing cycle_event for (cycle_id, station):
+                for stage, vals in prog.items():
+                    if vals["status_1"] == 1:
+                        # check if we've already logged this event
+                        cur.execute("""
+                            SELECT 1 FROM cycle_event
+                             WHERE cycle_id=%s AND stage=%s
+                        """, (cycle_id, stage))
+                        if cur.fetchone() is None:
+                            # insert the event
+                            cur.execute("""
+                                INSERT INTO cycle_event(cycle_id, stage, ts)
+                                     VALUES(%s, %s, %s)
+                            """, (cycle_id, stage, vals["ts"]))
+
+                # 4) If unload_station.status_1 == 1 → finalize cycle
+                unload = prog.get("unload_station", {})
+                if unload.get("status_1") == 1:
+                    cur.execute("""
+                        UPDATE cycle_master
+                           SET end_ts = %s
+                         WHERE cycle_id = %s
+                           AND end_ts IS NULL
+                    """, (unload["ts"], cycle_id))
+
+    finally:
+        await consumer.stop()
 # ─── Startup / Shutdown ───────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
     await init_kafka_producer()
     for name, topic in WS_TOPICS.items():
         asyncio.create_task(kafka_to_ws(name, topic))
+    asyncio.create_task(consume_machine_status_and_populate_db())
     asyncio.create_task(listen_for_plc_write_responses())
 
 @app.on_event("shutdown")
