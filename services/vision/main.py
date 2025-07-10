@@ -6,11 +6,13 @@ import string
 import csv
 from datetime import datetime
 from io import StringIO
-
+import json
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
+from typing import Dict
+
 
 app = FastAPI()
 
@@ -21,6 +23,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
+@app.post("/fetch/data")
+async def receive_webhook(payload: Dict):
+    # payload = await request.json()
+    print("Webhook received:", payload)
+
+    # Optionally: save to DB, file, or process the image etc.
+    # Save to file
+    with open("webhook_log.json", "a") as f:
+        f.write(json.dumps(payload) + "\n")
+    
+    return {"status": "Webhook received"}
+
+
 
 def generate_object_id():
     return "".join(random.choices(string.hexdigits.lower(), k=24))
