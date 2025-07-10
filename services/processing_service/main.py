@@ -208,6 +208,7 @@ async def process_event(topic: str, msg: dict) -> dict:
             }, timeout=5)
             if r.status_code == 200 and r.json().get("IsSuccessful"):
                 await publish_cycle_event(cycle_id, "MES")
+        
         except:
             pass
 
