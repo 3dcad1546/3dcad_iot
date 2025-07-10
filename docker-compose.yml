@@ -180,7 +180,7 @@ services:
 
   vision:
     build:
-      context: ./vision
+      context: ./services/vision
       dockerfile: Dockerfile
     image: vision:latest
     ports:
