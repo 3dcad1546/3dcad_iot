@@ -85,6 +85,16 @@
         "barcode_block_2": [2320, 20]
         }
     },
+    "mes_upload": {
+        "write": {
+            "MESUpload": [2605, 1]
+            }
+    },
+    "trace_upload": {
+        "write": {
+            "TraceUpload": [2604, 1]
+            }
+    },
     "startup": {
         "read": {
             "INPUT_CONVEYOR_MODE_POS": 1000,

@@ -15,6 +15,11 @@ from aiokafka.errors import NoBrokersAvailable
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+# load just the bits map
+map_path = os.path.join(os.path.dirname(__file__), "register_map.json")
+with open(map_path, "r") as f:
+    REGISTER_MAP = json.load(f)
+
 # ─── Configuration ────────────────────────────────────────────────
 KAFKA_BROKER            = os.getenv("KAFKA_BROKER", "kafka:9092")
 RAW_TOPIC               = os.getenv("RAW_KAFKA_TOPIC", "raw_server_data")
@@ -26,15 +31,7 @@ CONSUMER_GROUP          = os.getenv("CONSUMER_GROUP", "processing_service")
 DB_URL                  = os.getenv("DB_URL")
 USER_LOGIN_URL          = os.getenv("USER_LOGIN_URL")
 
-# path to your register_map.json (which must include a "status_bits" → "write" section)
-REGISTER_MAP_PATH       = os.getenv("REGISTER_MAP_PATH", "register_map.json")
 
-# ─── Load register_map.json ───────────────────────────────────────
-try:
-    with open(pathlib.Path(__file__).parent / REGISTER_MAP_PATH) as f:
-        REGISTER_MAP = json.load(f)
-except Exception as e:
-    raise RuntimeError(f"couldn't load register_map.json: {e}")
 
 # ─── Postgres setup ───────────────────────────────────────────────
 pg_conn = psycopg2.connect(DB_URL)
@@ -181,57 +178,58 @@ async def process_event(topic: str, msg: dict) -> dict:
       VALUES (%s,%s,%s,%s,%s)
     """, (cycle_id, operator, shift_id, "", barcode))
     await publish_cycle_event(cycle_id, "InputStation")
-
+    
+    cmds = []
     # 2) manual override
     if not is_auto or operator is None:
         await publish_cycle_event(cycle_id, "ManualMode")
-        return {
-            "emit": True,
-            "command": {
-                "section": "manual",
-                "tag_name": "ManualMode",
-                "value": 1,
-                "request_id": cycle_id
-            }
-        }
+        cmds.append({
+          "section":  "manual_station",
+          "tag_name": "ManualMode",
+          "value":    1,
+          "request_id": cycle_id
+        })
+        return {"commands": cmds}
 
     # 3) MES PC
     if machine_cfg["is_mes_enabled"]:
-        try:
-            r = requests.post(machine_cfg["pc_url"], json={
-              "UniqueId":     barcode,
-              "MachineId":    MACHINE_ID,
-              "OperatorId":   operator,
-              "Tools":        [], 
-              "RawMaterials": [],
-              "CbsStreamName": os.getenv("CBS_STREAM_NAME","")
-            }, timeout=5)
-            if r.status_code == 200 and r.json().get("IsSuccessful"):
-                await publish_cycle_event(cycle_id, "MES")
-        
-        except:
-            pass
+        r = requests.post(machine_cfg["pc_url"], json={}, timeout=5)
+        if r.status_code == 200 and r.json().get("IsSuccessful"):
+            await publish_cycle_event(cycle_id, "MES")
+            cmds.append({
+              "section":  "mes_upload",
+              "tag_name": "MESUpload",
+              "value":    1,
+              "request_id": cycle_id
+            })
 
     # 4) Trace PC
     if machine_cfg["is_trace_enabled"]:
-        try:
-            r = requests.get(machine_cfg["trace_pc_url"],
-                             params={"serial":barcode,"serial_type":"band"},
-                             timeout=3)
-            if r.status_code == 200 and r.json().get("pass"):
-                await publish_cycle_event(cycle_id, "Process")
-        except:
-            pass
+        r = requests.get(machine_cfg["trace_pc_url"],
+                         params={"serial":barcode,"serial_type":"band"}, timeout=3)
+        if r.status_code == 200 and r.json().get("pass"):
+            await publish_cycle_event(cycle_id, "Process")
+            cmds.append({
+              "section":  "process_station",
+              "tag_name": "ProcessPassing",
+              "value":    1,
+              "request_id": cycle_id
+            })
 
-        # 5) Trace Interlock
-        try:
-            r = requests.post(machine_cfg["trace_il_url"],
-                              params={"serial":barcode,"serial_type":"band"},
-                              timeout=3)
-            if r.status_code == 200 and r.json().get("pass"):
-                await publish_cycle_event(cycle_id, "Trace")
-        except:
-            pass
+        # 5) Interlock
+        r = requests.post(machine_cfg["trace_il_url"],
+                          params={"serial":barcode,"serial_type":"band"}, timeout=3)
+        if r.status_code == 200 and r.json().get("pass"):
+            await publish_cycle_event(cycle_id, "Trace")
+            cmds.append({
+              "section":  "trace_upload",
+              "tag_name": "TraceUpload",
+              "value":    1,
+              "request_id": cycle_id
+            })
+
+    
+
 
     # 6) PLC write — now using register_map.json for addresses & bits
     status_map = REGISTER_MAP["status_bits"]["write"]
@@ -248,7 +246,7 @@ async def process_event(topic: str, msg: dict) -> dict:
         "request_id": cycle_id
     }
     await publish_cycle_event(cycle_id, "PLCWrite")
-    return {"emit": True, "command": plc_cmd}
+    return {"commands": cmds}
 
 # ─── Main loop ─────────────────────────────────────────────────────
 async def run():
@@ -264,14 +262,14 @@ async def run():
               (payload.get("serial",""), topic, json.dumps(payload))
             )
             out = await process_event(topic, payload)
-            if out.get("emit"):
-                cmd = out["command"]
+            for cmd in out.get("commands", []):
                 await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, cmd)
-                # audit PLC cmd
+                # audit PLC command
                 pg_cur.execute(
-                  "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
-                  (payload.get("serial",""), "machine_commands", json.dumps(cmd))
+                "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
+                (payload.get("barcode",""), "machine_commands", json.dumps(cmd))
                 )
+
     except Exception as e:
         print("[Processing] Error:", e)
     finally:

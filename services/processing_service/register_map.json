@@ -1,15 +1,10 @@
 {
-    "status_bits": {
-      "write": {
-        "MES":     [3000, 0],
-        "Process": [3000, 1],
-        "Trace":   [3000, 2]
-      }
-    },
-    "manual": {
-      "write": {
-        "ManualMode": [3001, 0]
-      }
+  "status_bits": {
+    "write": {
+      "ManualMode":    [1001, 0],  
+      "MESUpload":     [2605, 1],  
+      "ProcessPassing":[2601, 1], 
+      "TraceUpload":   [2604, 1]   
     }
   }
-  
+}
