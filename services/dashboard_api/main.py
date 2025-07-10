@@ -267,6 +267,19 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
         if mu.status_code!=200 or not mu.json().get("IsSuccessful"):
             raise HTTPException(400, f"MES upload failed: {mu.text}")
         result["mes_upload"] = mu.json()
+        # tell the PLC to raise the MES-upload bit
+        asyncio.create_task(
+          kafka_producer.send_and_wait(
+            PLC_WRITE_COMMANDS_TOPIC,
+            {
+              "section":   "mes_upload",
+              "tag_name":  "MESUpload",
+              "value":      1,
+              "request_id": serial
+            }
+          )
+        )
+
         cur.execute(
             "INSERT INTO mes_trace_history(serial,step,response_json,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             (serial,"mes_upload",json.dumps(result["mes_upload"]))
@@ -280,6 +293,18 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
         if td.status_code!=200:
             raise HTTPException(400, f"Trace log failed: {td.text}")
         result["trace_log"] = td.json()
+        # tell the PLC to raise the Trace-upload bit
+        asyncio.create_task(
+          kafka_producer.send_and_wait(
+            PLC_WRITE_COMMANDS_TOPIC,
+            {
+              "section":   "trace_upload",
+              "tag_name":  "TraceUpload",
+              "value":      1,
+              "request_id": serial
+            }
+          )
+        )
         cur.execute(
             "INSERT INTO mes_trace_history(serial,step,response_json,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             (serial,"trace_log",json.dumps(result["trace_log"]))
