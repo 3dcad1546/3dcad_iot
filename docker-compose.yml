@@ -178,6 +178,15 @@ services:
     env_file:
       - ./.env
 
+  vision:
+    build:
+      context: ./vision
+      dockerfile: Dockerfile
+    image: vision:latest
+    ports:
+      - "5000:5000"
+    networks:
+      - default
   postgres:
     image: postgres:15
     container_name: edge_pg
