@@ -142,6 +142,7 @@ def create_machine(cfg: MachineConfig):
         "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING machine_id,mes_process_control_url,mes_upload_url,is_mes_enabled,trace_process_control_url,trace_interlock_url,is_trace_enabled",
         (cfg.machine_id, cfg.mes_process_control_url, cfg.mes_upload_url, cfg.is_mes_enabled, cfg.trace_process_control_url, cfg.trace_interlock_url, cfg.is_trace_enabled)
     )
+    conn.commit()
     row = cur.fetchone()
     return MachineConfig(**dict(zip([c.name for c in cur.description], row)))
 
@@ -180,6 +181,7 @@ def create_user(u: UserCreate):
         "INSERT INTO users (id, first_name, last_name, username, password_hash, role) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id, first_name, last_name, username, role",
         (str(user_id), u.first_name, u.last_name, u.username, hashed, u.role)
     )
+    conn.commit()
     row = cur.fetchone()
     return UserOut(**dict(zip([c.name for c in cur.description], row)))
 
@@ -232,6 +234,7 @@ def create_access(a: AccessEntry):
         "INSERT INTO user_access (role,page_name,can_read,can_write) VALUES(%s,%s,%s,%s) RETURNING role,page_name,can_read,can_write",
         (a.role, a.page_name, a.can_read, a.can_write)
     )
+    conn.commit()
     row = cur.fetchone()
     return AccessEntry(**dict(zip([c.name for c in cur.description], row)))
 
@@ -262,6 +265,7 @@ def delete_access(role: str, page_name: str):
 @app.post("/api/messages", response_model=MessageEntry)
 def create_message(m: MessageEntry):
     cur.execute("INSERT INTO message_master(code,message) VALUES(%s,%s) RETURNING code,message", (m.code, m.message))
+    conn.commit()
     row = cur.fetchone()
     return MessageEntry(**dict(zip([c.name for c in cur.description], row)))
 
@@ -298,6 +302,7 @@ def create_plc_test(p: PLCTest):
         "INSERT INTO plc_test(name,param1,param2,param3,param4,param5,param6) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id,param1,param2,param3,param4,param5,param6",
         (p.param1,p.param2,p.param3,p.param4,p.param5,p.param6)
     )
+    conn.commit()
     row = cur.fetchone()
     return dict(zip([c.name for c in cur.description], row))
 
@@ -459,6 +464,7 @@ async def shift_watcher():
               INSERT INTO auto_status_log(shift_id,status_val,ts)
               VALUES(%s,%s,NOW())
             """,(sid,prev))
+            conn.commit()
 
             # mark operator_sessions
             cur.execute("""
@@ -466,6 +472,7 @@ async def shift_watcher():
                  SET logout_ts=NOW()
                WHERE shift_id=%s AND logout_ts IS NULL
             """,(sid,))
+            conn.commit()
 
             # send PLC write=0
             req_id = str(uuid.uuid4())
@@ -551,12 +558,14 @@ async def login(req: LoginReq):
       INSERT INTO sessions(token, username, role, shift_id, login_ts)
       VALUES (%s, %s, %s, %s, NOW())
     """, (token, req.Username, req.Role, sid))
+    conn.commit()
 
     if req.Role == "operator":
         cur.execute("""
           INSERT INTO operator_sessions(username, shift_id, login_ts)
           VALUES (%s, %s, NOW())
         """, (req.Username, sid))
+        conn.commit()
 
     # 6) fire PLC login‐bit = 1
     request_id = str(uuid.uuid4())
@@ -605,6 +614,7 @@ async def logout(token: str = Header(...,alias="X-Auth-Token")):
       UPDATE operator_sessions SET logout_ts=NOW()
        WHERE username=%s AND logout_ts IS NULL
     """,(user,))
+    conn.commit()
 
     # PLC write=2
     req_id = str(uuid.uuid4())

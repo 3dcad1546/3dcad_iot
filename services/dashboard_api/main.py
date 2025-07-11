@@ -9,7 +9,6 @@ import psycopg2
 import psycopg2.extensions
 import uuid
 from psycopg2.extras import RealDictCursor
-from psycopg2 import errors
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query, Header
 from pydantic import BaseModel, Field
@@ -18,6 +17,7 @@ from influxdb_client import InfluxDBClient, WriteOptions
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
 from fastapi.middleware.cors import CORSMiddleware 
+from pytz import timezone
 
 # ─── Configuration ──────────────────────────────────────────────
 PLC_WRITE_COMMANDS_TOPIC   = os.getenv("PLC_WRITE_COMMANDS_TOPIC",   "plc_write_commands")
@@ -35,6 +35,8 @@ ON_OFF_STATUS              = os.getenv("ON_OFF_STATUS",              "on_off_sta
 # ─── FastAPI App ─────────────────────────────────────────────────
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
 
 # ─── PostgreSQL Setup ──────────────────────────────────────────────
 DB_URL = os.getenv("DB_URL")
@@ -83,23 +85,6 @@ def get_cfg(key: str, default=None):
 # ─── Kafka Bootstrap Setting ──────────────────────────────────────
 KAFKA_BOOTSTRAP = get_cfg("KAFKA_BROKER", "kafka:9092")
 
-# ─── variant_master  ───────────────────────────────────
-cur.execute("""
-CREATE TABLE IF NOT EXISTS variant_master (
-  id   SERIAL      PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL
-);
-""")
-
-cur.execute("""
-ALTER TABLE cycle_master
-  ADD COLUMN IF NOT EXISTS variant TEXT NULL;
-""")
-
-cur.execute("""
-CREATE INDEX IF NOT EXISTS idx_cycle_master_variant
-  ON cycle_master(variant);
-""")
 # ─── InfluxDB Setup ────────────────────────────────────────────────
 influx_client = InfluxDBClient(
     url=get_cfg("INFLUXDB_URL",   "http://influxdb:8086"),
@@ -138,14 +123,6 @@ class CycleReportItem(BaseModel):
     start_ts: datetime
     end_ts: Optional[datetime]
     events: List[CycleEvent]
-
-class Variant(BaseModel):
-    id:   int
-    name: str
-
-class VariantCreate(BaseModel):
-    name: str = Field(..., description="Name of the variant")
-
 
 # ─── Auth Guard ───────────────────────────────────────────────────
 USER_SVC_URL = os.getenv("USER_SVC_URL", "http://user_login:8001")
@@ -214,6 +191,7 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
             "INSERT INTO mes_trace_history(serial,step,response_json,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             (serial, "mes_pc", json.dumps(result["mes_pc"]))
         )
+        conn.commit()
 
         # Trace Process Control
         tp = requests.get(
@@ -229,6 +207,7 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
             "INSERT INTO mes_trace_history(serial,step,response_json,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             (serial,"trace_pc",json.dumps(tpj))
         )
+        conn.commit()
 
         # Trace Interlock
         il = requests.post(
@@ -244,6 +223,7 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
             "INSERT INTO mes_trace_history(serial,step,response_json,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             (serial,"interlock",json.dumps(ilj))
         )
+        conn.commit()
 
         # MES Upload
         payload = {
@@ -267,23 +247,11 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
         if mu.status_code!=200 or not mu.json().get("IsSuccessful"):
             raise HTTPException(400, f"MES upload failed: {mu.text}")
         result["mes_upload"] = mu.json()
-        # tell the PLC to raise the MES-upload bit
-        asyncio.create_task(
-          kafka_producer.send_and_wait(
-            PLC_WRITE_COMMANDS_TOPIC,
-            {
-              "section":   "mes_upload",
-              "tag_name":  "MESUpload",
-              "value":      1,
-              "request_id": serial
-            }
-          )
-        )
-
         cur.execute(
             "INSERT INTO mes_trace_history(serial,step,response_json,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             (serial,"mes_upload",json.dumps(result["mes_upload"]))
         )
+        conn.commit()
 
         # Trace Data Log
         td = requests.post(
@@ -293,28 +261,18 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
         if td.status_code!=200:
             raise HTTPException(400, f"Trace log failed: {td.text}")
         result["trace_log"] = td.json()
-        # tell the PLC to raise the Trace-upload bit
-        asyncio.create_task(
-          kafka_producer.send_and_wait(
-            PLC_WRITE_COMMANDS_TOPIC,
-            {
-              "section":   "trace_upload",
-              "tag_name":  "TraceUpload",
-              "value":      1,
-              "request_id": serial
-            }
-          )
-        )
         cur.execute(
             "INSERT INTO mes_trace_history(serial,step,response_json,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             (serial,"trace_log",json.dumps(result["trace_log"]))
         )
+        conn.commit()
 
         # Final audit
         cur.execute(
             "INSERT INTO scan_audit(serial,operator,result,ts) VALUES(%s,%s,%s,NOW())",
             (serial,user,req.result)
         )
+        conn.commit()
         return result
 
     except HTTPException as he:
@@ -322,12 +280,14 @@ def scan_part(req: ScanRequest, user: str = Depends(require_login)):
             "INSERT INTO error_logs(context,error_msg,details,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             ("scan",str(he.detail),json.dumps({"serial":serial,"error":he.detail}))
         )
+        conn.commit()
         raise
     except Exception as e:
         cur.execute(
             "INSERT INTO error_logs(context,error_msg,details,ts) VALUES(%s,%s,%s::jsonb,NOW())",
             ("scan",str(e),json.dumps({"serial":serial}))
         )
+        conn.commit()
         raise HTTPException(500,"Internal server error")
 
 # ─── Sensors Endpoints ─────────────────────────────────────────────
@@ -408,70 +368,7 @@ def oee_history(
         raise HTTPException(404,f"No OEE in {start_ts}→{end_ts}")
     return data
 
-# ─── Variant CRUD ───────────────────────────────────────────────────
-
-@app.post("/api/variants", response_model=Variant)
-def create_variant(item: VariantCreate, user: str = Depends(require_login)):
-    try:
-        cur.execute(
-            "INSERT INTO variant_master(name) VALUES (%s) RETURNING id,name",
-            (item.name,)
-        )
-    except errors.UniqueViolation:
-        raise HTTPException(409, "Variant already exists")
-    row = cur.fetchone()
-    return Variant(**row)
-
-@app.get("/api/variants", response_model=List[Variant])
-def list_variants(user: str = Depends(require_login)):
-    cur.execute("SELECT id,name FROM variant_master ORDER BY name")
-    rows = cur.fetchall()
-    return [Variant(**r) for r in rows]
-
-@app.put("/api/variants/{variant_id}", response_model=Variant)
-def update_variant(variant_id: int, item: VariantCreate, user: str = Depends(require_login)):
-    cur.execute(
-        "UPDATE variant_master SET name=%s WHERE id=%s RETURNING id,name",
-        (item.name, variant_id)
-    )
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(404, "Variant not found")
-    return Variant(**row)
-
-@app.delete("/api/variants/{variant_id}", status_code=204)
-def delete_variant(variant_id: int, user: str = Depends(require_login)):
-    cur.execute("DELETE FROM variant_master WHERE id=%s", (variant_id,))
-    if cur.rowcount == 0:
-        raise HTTPException(404, "Variant not found")
-    return
 # ─── Cycle Reporting Endpoint ──────────────────────────────────────
-class CycleVariantUpdate(BaseModel):
-    variant_id: int
-
-@app.put("/api/cycles/{cycle_id}/variant", response_model=Dict[str,str])
-def assign_cycle_variant(
-    cycle_id: str,
-    upd: CycleVariantUpdate,
-    user: str = Depends(require_login)
-):
-    # 1) look up the variant name
-    cur.execute("SELECT name FROM variant_master WHERE id=%s", (upd.variant_id,))
-    vr = cur.fetchone()
-    if not vr:
-        raise HTTPException(404, "Variant not found")
-    name = vr["name"]
-
-    # 2) update the cycle
-    cur.execute(
-        "UPDATE cycle_master SET variant=%s WHERE cycle_id=%s",
-        (name, cycle_id)
-    )
-    if cur.rowcount == 0:
-        raise HTTPException(404, "Cycle not found")
-
-    return {"cycle_id": cycle_id, "variant": name}
-
 @app.get("/api/cycles", response_model=List[CycleReportItem])
 def get_cycles(
     operator: Optional[str]      = None,
@@ -482,6 +379,10 @@ def get_cycles(
     to_ts:   Optional[datetime]  = Query(None, alias="to"),
     user: str = Depends(require_login)
 ):
+
+
+    IST = timezone("Asia/Kolkata")
+
     clauses, params = [], []
     if operator:
         clauses.append("cm.operator=%s");    params.append(operator)
@@ -492,12 +393,19 @@ def get_cycles(
     if variant:
         clauses.append("cm.variant=%s");    params.append(variant)
     if from_ts:
-        clauses.append("cm.start_ts>=%s");  params.append(from_ts)
+        from_ts_ist = from_ts.astimezone(IST)
+        clauses.append("cm.start_ts >= %s")
+        params.append(from_ts_ist)
+
     if to_ts:
-        clauses.append("cm.start_ts<=%s");  params.append(to_ts)
+        to_ts_ist = to_ts.astimezone(IST)
+        clauses.append("cm.start_ts <= %s")
+        params.append(to_ts_ist)
+
     where = " AND ".join(clauses) if clauses else "TRUE"
 
     sql = f"""
+    
     SELECT
       cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
       cm.start_ts, cm.end_ts,
@@ -510,20 +418,21 @@ def get_cycles(
     ORDER BY cm.start_ts DESC
     """
     cur.execute(sql, params)
+    conn.commit()
     rows = cur.fetchall()
 
     result: List[CycleReportItem] = []
     for r in rows:
         item = CycleReportItem(
-            cycle_id = r["cycle_id"],
-            operator = r["operator"],
-            shift_id = r["shift_id"],
-            variant  = r["variant"] or "",
-            barcode  = r["barcode"],
-            start_ts = r["start_ts"],
-            end_ts   = r["end_ts"],
-            events   = [CycleEvent(**e) for e in (r["events"] or [])]
-        )
+        cycle_id = r["cycle_id"],
+        operator = r["operator"],
+        shift_id = r["shift_id"],
+        variant  = r["variant"],
+        barcode  = r["barcode"],
+        start_ts = r["start_ts"].astimezone(IST),
+        end_ts   = r["end_ts"].astimezone(IST) if r["end_ts"] else None,
+        events   = [CycleEvent(stage=e["stage"], ts=e["ts"].astimezone(IST)) for e in (r["events"] or [])]
+    )
         result.append(item)
     return result
 
@@ -697,6 +606,8 @@ async def consume_machine_status_and_populate_db():
                          VALUES (%s, %s, %s)
                     ON CONFLICT (cycle_id) DO NOTHING
                 """, (cycle_id, f"{bc1}|{bc2}", s["created_ts"]))
+                
+                conn.commit()
 
                 # 3) For each station whose status_1 just turned ON and
                 #    there is no existing cycle_event for (cycle_id, station):
@@ -707,12 +618,15 @@ async def consume_machine_status_and_populate_db():
                             SELECT 1 FROM cycle_event
                              WHERE cycle_id=%s AND stage=%s
                         """, (cycle_id, stage))
+
+                        conn.commit()
                         if cur.fetchone() is None:
                             # insert the event
                             cur.execute("""
                                 INSERT INTO cycle_event(cycle_id, stage, ts)
                                      VALUES(%s, %s, %s)
                             """, (cycle_id, stage, vals["ts"]))
+                            conn.commit()
 
                 # 4) If unload_station.status_1 == 1 → finalize cycle
                 unload = prog.get("unload_station", {})
@@ -723,6 +637,7 @@ async def consume_machine_status_and_populate_db():
                          WHERE cycle_id = %s
                            AND end_ts IS NULL
                     """, (unload["ts"], cycle_id))
+                    conn.commit()
 
     finally:
         await consumer.stop()

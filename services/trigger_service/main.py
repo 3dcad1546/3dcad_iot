@@ -76,6 +76,7 @@ async def mqtt_to_kafka_loop():
                         "INSERT INTO mqtt_triggers(topic,payload) VALUES (%s,%s::jsonb)",
                         (msg.topic, json.dumps(data))
                     )
+                    pg_conn.commit()
                 except Exception as e:
                     print("⛔ failed to write to Postgres:", e)
 

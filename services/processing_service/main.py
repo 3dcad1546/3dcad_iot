@@ -35,8 +35,10 @@ USER_LOGIN_URL          = os.getenv("USER_LOGIN_URL")
 
 # ─── Postgres setup ───────────────────────────────────────────────
 pg_conn = psycopg2.connect(DB_URL)
+print(pg_conn,"pg_conn")
 pg_conn.autocommit = True
 pg_cur  = pg_conn.cursor(cursor_factory=RealDictCursor)
+
 
 # ensure audit + cycle tables exist
 pg_cur.execute("""
@@ -150,6 +152,7 @@ async def publish_cycle_event(cycle_id: str, stage: str):
       "INSERT INTO cycle_event(cycle_id,stage) VALUES(%s,%s)",
       (cycle_id, stage)
     )
+    pg_conn.commit()
 
 # ─── Business logic ────────────────────────────────────────────────
 async def process_event(topic: str, msg: dict) -> dict:
@@ -170,6 +173,7 @@ async def process_event(topic: str, msg: dict) -> dict:
           OR (start_time > end_time AND (NOW()::time >= start_time OR NOW()::time < end_time))
       LIMIT 1
     """)
+    
     row = pg_cur.fetchone()
     shift_id = row["id"] if row else None
 
@@ -177,6 +181,7 @@ async def process_event(topic: str, msg: dict) -> dict:
       INSERT INTO cycle_master(cycle_id,operator,shift_id,variant,barcode)
       VALUES (%s,%s,%s,%s,%s)
     """, (cycle_id, operator, shift_id, "", barcode))
+    pg_conn.commit()
     await publish_cycle_event(cycle_id, "InputStation")
     
     cmds = []
@@ -261,6 +266,7 @@ async def run():
               "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
               (payload.get("serial",""), topic, json.dumps(payload))
             )
+            pg_conn.commit()
             out = await process_event(topic, payload)
             for cmd in out.get("commands", []):
                 await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, cmd)
@@ -269,6 +275,7 @@ async def run():
                 "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
                 (payload.get("barcode",""), "machine_commands", json.dumps(cmd))
                 )
+                pg_conn.commit()
 
     except Exception as e:
         print("[Processing] Error:", e)

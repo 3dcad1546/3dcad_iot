@@ -66,9 +66,11 @@ CREATE TABLE IF NOT EXISTS shift_master (
 
 INSERT INTO shift_master (name, start_time, end_time) VALUES
   ('Shift A', '06:00:00', '14:00:00'),
-  ('Shift B', '14:00:00', '22:00:00'),
-  ('Shift C', '22:00:00', '06:00:00')
-ON CONFLICT (name) DO NOTHING;
+  ('Shift B', '14:00:00', '18:30:00'),
+  ('Shift C', '18:30:00', '06:00:00')
+ON CONFLICT (name) DO UPDATE SET
+  start_time = EXCLUDED.start_time,
+  end_time   = EXCLUDED.end_time;
 
 -- 4) Token-based sessions for all roles
 CREATE TYPE IF NOT EXISTS user_role AS ENUM ('operator','admin','engineer');
