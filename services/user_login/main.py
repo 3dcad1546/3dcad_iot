@@ -9,6 +9,7 @@ from passlib.hash import bcrypt
 from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 from pytz import timezone
+from zoneinfo import ZoneInfo
 
 
 # Router for CRUD operations
@@ -485,7 +486,7 @@ async def shift_watcher():
               "event":"auto-logout",
               "shift": name,
               "prev_status": prev,
-              "ts": datetime.utcnow().isoformat()+"Z"
+              "ts": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
             })
 
         else:
@@ -584,7 +585,7 @@ async def login(req: LoginReq):
       "shift":        shift_name,
       "shift_start":  st.isoformat(),
       "shift_end":    et.isoformat(),
-      "ts":           datetime.utcnow().isoformat() + "Z"
+      "ts": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
     })
 
     # 8) response
@@ -614,7 +615,7 @@ async def logout(token: str = Header(...,alias="X-Auth-Token")):
       UPDATE operator_sessions SET logout_ts=NOW()
        WHERE username=%s AND logout_ts IS NULL
     """,(user,))
-    conn.commit()
+    
 
     # PLC write=2
     req_id = str(uuid.uuid4())
@@ -622,7 +623,7 @@ async def logout(token: str = Header(...,alias="X-Auth-Token")):
       "section":"login","tag_name":"login","value":2,"request_id":req_id
     })
 
-    await ws_mgr.broadcast({"event":"logout","username":user,"ts":datetime.utcnow().isoformat()+"Z"})
+    await ws_mgr.broadcast({"event":"logout","username":user,"ts": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
     return {"message":"Logged out"}
 
 @app.get("/api/verify")
