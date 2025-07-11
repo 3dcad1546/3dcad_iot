@@ -14,6 +14,8 @@ from aiokafka.errors import NoBrokersAvailable
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import logging
+
 
 # load just the bits map
 map_path = os.path.join(os.path.dirname(__file__), "register_map.json")
@@ -147,12 +149,14 @@ async def publish_cycle_event(cycle_id: str, stage: str):
     evt = {"cycle_id": cycle_id, "stage": stage, "ts": now_iso()}
     # 1) Kafka
     await kafka_producer.send_and_wait(CYCLE_EVENT_TOPIC, evt)
+    logger.info("Kafka event sent — topic: %s, payload: %s", CYCLE_EVENT_TOPIC, evt)
     # 2) Postgres
     pg_cur.execute(
       "INSERT INTO cycle_event(cycle_id,stage) VALUES(%s,%s)",
       (cycle_id, stage)
     )
     pg_conn.commit()
+    logger.info("cycle_event inserted and committed — cycle_id: %s, stage: %s", cycle_id, stage)
 
 # ─── Business logic ────────────────────────────────────────────────
 async def process_event(topic: str, msg: dict) -> dict:
