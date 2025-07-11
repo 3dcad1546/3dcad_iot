@@ -9,6 +9,7 @@ import psycopg2
 import psycopg2.extensions
 import uuid
 from psycopg2.extras import RealDictCursor
+from psycopg2 import errors
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query, Header
 from pydantic import BaseModel, Field
@@ -85,6 +86,24 @@ def get_cfg(key: str, default=None):
 # ─── Kafka Bootstrap Setting ──────────────────────────────────────
 KAFKA_BOOTSTRAP = get_cfg("KAFKA_BROKER", "kafka:9092")
 
+# ─── variant_master  ───────────────────────────────────
+cur.execute("""
+CREATE TABLE IF NOT EXISTS variant_master (
+  id   SERIAL      PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL
+);
+""")
+
+cur.execute("""
+ALTER TABLE cycle_master
+  ADD COLUMN IF NOT EXISTS variant TEXT NULL;
+""")
+
+cur.execute("""
+CREATE INDEX IF NOT EXISTS idx_cycle_master_variant
+  ON cycle_master(variant);
+""")
+
 # ─── InfluxDB Setup ────────────────────────────────────────────────
 influx_client = InfluxDBClient(
     url=get_cfg("INFLUXDB_URL",   "http://influxdb:8086"),
@@ -123,6 +142,13 @@ class CycleReportItem(BaseModel):
     start_ts: datetime
     end_ts: Optional[datetime]
     events: List[CycleEvent]
+
+class Variant(BaseModel):
+    id:   int
+    name: str
+
+class VariantCreate(BaseModel):
+    name: str = Field(..., description="Name of the variant")
 
 # ─── Auth Guard ───────────────────────────────────────────────────
 USER_SVC_URL = os.getenv("USER_SVC_URL", "http://user_login:8001")
@@ -368,7 +394,72 @@ def oee_history(
         raise HTTPException(404,f"No OEE in {start_ts}→{end_ts}")
     return data
 
+# ─── Variant CRUD ───────────────────────────────────────────────────
+
+@app.post("/api/variants", response_model=Variant)
+def create_variant(item: VariantCreate, user: str = Depends(require_login)):
+    try:
+        cur.execute(
+            "INSERT INTO variant_master(name) VALUES (%s) RETURNING id,name",
+            (item.name,)
+        )
+    except errors.UniqueViolation:
+        raise HTTPException(409, "Variant already exists")
+    row = cur.fetchone()
+    return Variant(**row)
+
+@app.get("/api/variants", response_model=List[Variant])
+def list_variants(user: str = Depends(require_login)):
+    cur.execute("SELECT id,name FROM variant_master ORDER BY name")
+    rows = cur.fetchall()
+    return [Variant(**r) for r in rows]
+
+@app.put("/api/variants/{variant_id}", response_model=Variant)
+def update_variant(variant_id: int, item: VariantCreate, user: str = Depends(require_login)):
+    cur.execute(
+        "UPDATE variant_master SET name=%s WHERE id=%s RETURNING id,name",
+        (item.name, variant_id)
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Variant not found")
+    return Variant(**row)
+
+@app.delete("/api/variants/{variant_id}", status_code=204)
+def delete_variant(variant_id: int, user: str = Depends(require_login)):
+    cur.execute("DELETE FROM variant_master WHERE id=%s", (variant_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Variant not found")
+    return
+
 # ─── Cycle Reporting Endpoint ──────────────────────────────────────
+class CycleVariantUpdate(BaseModel):
+    variant_id: int
+
+@app.put("/api/cycles/{cycle_id}/variant", response_model=Dict[str,str])
+def assign_cycle_variant(
+    cycle_id: str,
+    upd: CycleVariantUpdate,
+    user: str = Depends(require_login)
+):
+    # 1) look up the variant name
+    cur.execute("SELECT name FROM variant_master WHERE id=%s", (upd.variant_id,))
+    vr = cur.fetchone()
+    if not vr:
+        raise HTTPException(404, "Variant not found")
+    name = vr["name"]
+
+    # 2) update the cycle
+    cur.execute(
+        "UPDATE cycle_master SET variant=%s WHERE cycle_id=%s",
+        (name, cycle_id)
+    )
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Cycle not found")
+
+    return {"cycle_id": cycle_id, "variant": name}
+
+
 @app.get("/api/cycles", response_model=List[CycleReportItem])
 def get_cycles(
     operator: Optional[str]      = None,
@@ -427,7 +518,7 @@ def get_cycles(
         cycle_id = r["cycle_id"],
         operator = r["operator"],
         shift_id = r["shift_id"],
-        variant  = r["variant"],
+        variant  = r["variant"] or "",
         barcode  = r["barcode"],
         start_ts = r["start_ts"].astimezone(IST),
         end_ts   = r["end_ts"].astimezone(IST) if r["end_ts"] else None,
