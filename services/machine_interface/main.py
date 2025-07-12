@@ -460,12 +460,17 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             bcB = decode_string((await client.read_holding_registers(address=ld["barcode_block_2"][0], count=ld["barcode_block_2"][1])).registers)
             set_id = f"{bcA}|{bcB}"
             print(set_id,"setttt")
-            active_sets.append({
-                "set_id":     set_id,
-                "barcodes":   [bcA, bcB],
-                "progress":   {},         # will fill below
-                "created_ts": now
-            })
+            if bcA or bcB:  # At least one valid barcode
+                set_id = f"{bcA}|{bcB}"
+                print(f"Creating new set with ID: {set_id}")
+                active_sets.append({
+                    "set_id":     set_id,
+                    "barcodes":   [bcA, bcB],
+                    "progress":   {},         
+                    "created_ts": now
+                })
+            else:
+                print("WARNING: Skipping set creation due to empty barcodes")
         #     await client.write_register(BARCODE_FLAG_1, 0)
         #     await client.write_register(BARCODE_FLAG_2, 0)
         #     _load_seen = True

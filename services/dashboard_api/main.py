@@ -679,59 +679,101 @@ async def consume_machine_status_and_populate_db():
         value_deserializer=lambda b: json.loads(b.decode())
     )
     await consumer.start()
+    
+    print(f"[DEBUG] Started consuming machine_status for cycle processing")
 
     try:
         async for msg in consumer:
             payload = msg.value
             ts      = payload["ts"]
             sets    = payload.get("sets", [])
+            print(f"[DEBUG] Processing {len(sets)} sets from machine_status")
 
             for s in sets:
                 cycle_id = s["set_id"]               # e.g. "BC1|BC2"
+                if not cycle_id or cycle_id == "|":
+                    print(f"[DEBUG] Skipping invalid cycle_id: '{cycle_id}'")
+                    continue
+                    
                 bc1, bc2 = s["barcodes"]
+                barcode = next((b for b in [bc1, bc2] if b), "UNKNOWN")
+                if not barcode or barcode == "UNKNOWN":
+                    print(f"[DEBUG] Skipping cycle with no valid barcode: {s['barcodes']}")
+                    continue
+                    
                 prog     = s["progress"]             # { station: {status_1, status_2, ts}, … }
-
-                # 2) Upsert cycle_master
-                cur.execute("""
-                    INSERT INTO cycle_master(cycle_id, barcode, start_ts)
-                         VALUES (%s, %s, %s)
-                    ON CONFLICT (cycle_id) DO NOTHING
-                """, (cycle_id, f"{bc1}|{bc2}", s["created_ts"]))
                 
-                conn.commit()
+                print(f"[DEBUG] Processing cycle: {cycle_id}, barcode: {barcode}")
 
-                # 3) For each station whose status_1 just turned ON and
-                #    there is no existing cycle_event for (cycle_id, station):
+                # Get current shift
+                cur.execute("""
+                    SELECT id FROM shift_master
+                    WHERE (start_time < end_time AND start_time <= NOW()::time AND NOW()::time < end_time)
+                       OR (start_time > end_time AND (NOW()::time >= start_time OR NOW()::time < end_time))
+                    LIMIT 1
+                """)
+                row = cur.fetchone()
+                shift_id = row["id"] if row else 1  # Default to shift 1 if none found
+
+                # 2) Upsert cycle_master with all required fields
+                try:
+                    cur.execute("""
+                        INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts)
+                             VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (cycle_id) DO NOTHING
+                    """, (cycle_id, barcode, "system", shift_id, "default", s["created_ts"]))
+                    conn.commit()
+                    print(f"[DEBUG] Created or found cycle: {cycle_id}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to insert cycle_master record: {e}")
+                    conn.rollback()
+                    continue
+
+                # 3) For each station whose status_1 just turned ON
                 for stage, vals in prog.items():
                     if vals["status_1"] == 1:
-                        # check if we've already logged this event
-                        cur.execute("""
-                            SELECT 1 FROM cycle_event
-                             WHERE cycle_id=%s AND stage=%s
-                        """, (cycle_id, stage))
-
-                        conn.commit()
-                        if cur.fetchone() is None:
-                            # insert the event
+                        try:
+                            # check if we've already logged this event
                             cur.execute("""
-                                INSERT INTO cycle_event(cycle_id, stage, ts)
-                                     VALUES(%s, %s, %s)
-                            """, (cycle_id, stage, vals["ts"]))
-                            conn.commit()
+                                SELECT 1 FROM cycle_event
+                                 WHERE cycle_id=%s AND stage=%s
+                            """, (cycle_id, stage))
+                            
+                            if cur.fetchone() is None:
+                                # insert the event
+                                cur.execute("""
+                                    INSERT INTO cycle_event(cycle_id, stage, ts)
+                                         VALUES(%s, %s, %s)
+                                """, (cycle_id, stage, vals["ts"]))
+                                conn.commit()
+                                print(f"[DEBUG] Added event for cycle {cycle_id}: {stage}")
+                        except Exception as e:
+                            print(f"[ERROR] Failed to process cycle event: {e}")
+                            conn.rollback()
 
                 # 4) If unload_station.status_1 == 1 → finalize cycle
                 unload = prog.get("unload_station", {})
                 if unload.get("status_1") == 1:
-                    cur.execute("""
-                        UPDATE cycle_master
-                           SET end_ts = %s
-                         WHERE cycle_id = %s
-                           AND end_ts IS NULL
-                    """, (unload["ts"], cycle_id))
-                    conn.commit()
+                    try:
+                        cur.execute("""
+                            UPDATE cycle_master
+                               SET end_ts = %s
+                             WHERE cycle_id = %s
+                               AND end_ts IS NULL
+                        """, (unload["ts"], cycle_id))
+                        conn.commit()
+                        print(f"[DEBUG] Finalized cycle: {cycle_id}")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to finalize cycle: {e}")
+                        conn.rollback()
 
+    except Exception as e:
+        print(f"[ERROR] Unexpected error in machine_status consumer: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         await consumer.stop()
+        print(f"[DEBUG] Stopped machine_status consumer")
 # ─── Startup / Shutdown ───────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
