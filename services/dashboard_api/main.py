@@ -1,4 +1,5 @@
 import os,json,time,threading,select,asyncio,requests,psycopg2,psycopg2.extensions,uuid,logging
+from logging.handlers import RotatingFileHandler
 from psycopg2.extras import RealDictCursor
 from psycopg2 import errors
 from datetime import datetime, timedelta
@@ -15,7 +16,17 @@ from pytz import timezone
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        # Console handler
+        logging.StreamHandler(),
+        # File handler with rotation
+        RotatingFileHandler(
+            "/app/logs/dashboard_api.log", 
+            maxBytes=10485760,  # 10MB
+            backupCount=5
+        )
+    ]
 )
 logger = logging.getLogger("dashboard-api")
 
