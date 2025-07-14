@@ -186,3 +186,12 @@ CREATE TABLE IF NOT EXISTS cycle_event (
   stage       TEXT        NOT NULL,
   ts          TIMESTAMP   NOT NULL DEFAULT NOW()
 );
+--15)Vision Analytics Data
+CREATE TABLE IF NOT EXISTS cycle_analytics (
+    id SERIAL PRIMARY KEY,
+    cycle_id TEXT REFERENCES cycle_master(cycle_id),
+    json_data JSONB NOT NULL,
+    received_ts TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cycle_analytics_cycle_id ON cycle_analytics(cycle_id);

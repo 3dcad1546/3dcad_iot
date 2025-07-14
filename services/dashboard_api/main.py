@@ -3,7 +3,7 @@ from logging.handlers import RotatingFileHandler
 from psycopg2.extras import RealDictCursor
 from psycopg2 import errors
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query, Header
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query, Header,Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 from influxdb_client import InfluxDBClient, WriteOptions
@@ -153,6 +153,7 @@ class CycleReportItem(BaseModel):
     start_ts: datetime
     end_ts: Optional[datetime]
     events: List[CycleEvent]
+    analytics: Optional[dict] = None
 
 class Variant(BaseModel):
     id:   int
@@ -443,6 +444,44 @@ def delete_variant(variant_id: int, user: str = Depends(require_login)):
         raise HTTPException(404, "Variant not found")
     return
 
+#receive webhook data
+@app.post("/edge/api/v1/analytics")
+async def receive_analytics(request: Request):
+    data = await request.json()
+    
+    # Extract cycle_id from the analytics data (adjust this based on your actual data structure)
+    # Assuming the analytics data contains a reference to the barcode/cycle
+    barcode = data.get("barcode") or data.get("part_id")
+    
+    if not barcode:
+        logger.warning(f"Analytics data received without barcode identifier: {data}")
+        return {"status": "warning", "message": "No barcode found in data"}
+    
+    # Find the corresponding cycle_id for this barcode
+    try:
+        cur.execute("SELECT cycle_id FROM cycle_master WHERE barcode = %s ORDER BY start_ts DESC LIMIT 1", 
+                    (barcode,))
+        row = cur.fetchone()
+        if not row:
+            logger.warning(f"No cycle found for barcode {barcode} in analytics data")
+            return {"status": "warning", "message": f"No cycle found for barcode {barcode}"}
+        
+        cycle_id = row["cycle_id"]
+        
+        # Store the analytics data
+        cur.execute(
+            "INSERT INTO cycle_analytics(cycle_id, json_data) VALUES(%s, %s)",
+            (cycle_id, json.dumps(data))
+        )
+        conn.commit()
+        
+        logger.info(f"Stored analytics data for cycle {cycle_id}, barcode {barcode}")
+        return {"status": "success", "cycle_id": cycle_id}
+        
+    except Exception as e:
+        logger.error(f"Error storing analytics data: {e}")
+        conn.rollback()
+        return {"status": "error", "message": str(e)}
 # ─── Cycle Reporting Endpoint ──────────────────────────────────────
 class CycleVariantUpdate(BaseModel):
     variant_id: int
@@ -479,10 +518,9 @@ def get_cycles(
     variant: Optional[str]       = None,
     from_ts: Optional[datetime]  = Query(None, alias="from"),
     to_ts:   Optional[datetime]  = Query(None, alias="to"),
+    include_analytics: bool      = Query(False),  # Add this parameter
     user: str = Depends(require_login)
 ):
-
-
     IST = timezone("Asia/Kolkata")
 
     clauses, params = [], []
@@ -506,17 +544,25 @@ def get_cycles(
 
     where = " AND ".join(clauses) if clauses else "TRUE"
 
+    # Update the SQL query to include analytics if requested
+    analytics_select = ""
+    analytics_join = ""
+    if include_analytics:
+        analytics_select = ", ca.json_data as analytics"
+        analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = cm.cycle_id"
+
     sql = f"""
-    
     SELECT
       cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
       cm.start_ts, cm.end_ts,
       jsonb_agg(jsonb_build_object('stage',ce.stage,'ts',ce.ts)
                 ORDER BY ce.id) AS events
+      {analytics_select}
     FROM cycle_master cm
     LEFT JOIN cycle_event ce ON ce.cycle_id=cm.cycle_id
+    {analytics_join}
     WHERE {where}
-    GROUP BY cm.cycle_id
+    GROUP BY cm.cycle_id {", ca.json_data" if include_analytics else ""}
     ORDER BY cm.start_ts DESC
     """
     cur.execute(sql, params)
@@ -525,17 +571,22 @@ def get_cycles(
 
     result: List[CycleReportItem] = []
     for r in rows:
-        item = CycleReportItem(
-        cycle_id = r["cycle_id"],
-        operator = r["operator"],
-        shift_id = r["shift_id"],
-        variant  = r["variant"] or "",
-        barcode  = r["barcode"],
-        start_ts = r["start_ts"].astimezone(IST),
-        end_ts   = r["end_ts"].astimezone(IST) if r["end_ts"] else None,
-        events   = [CycleEvent(stage=e["stage"], ts=e["ts"].astimezone(IST)) for e in (r["events"] or [])]
-    )
-        result.append(item)
+        item_dict = {
+            "cycle_id": r["cycle_id"],
+            "operator": r["operator"],
+            "shift_id": r["shift_id"],
+            "variant": r["variant"] or "",
+            "barcode": r["barcode"],
+            "start_ts": r["start_ts"].astimezone(IST),
+            "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
+            "events": [{"stage": e["stage"], "ts": e["ts"].astimezone(IST)} for e in (r["events"] or [])]
+        }
+        
+        # Add analytics if present
+        if include_analytics and "analytics" in r and r["analytics"]:
+            item_dict["analytics"] = r["analytics"]
+            
+        result.append(CycleReportItem(**item_dict))
     return result
 
 # ─── WebSocket Manager ────────────────────────────────────────────
@@ -777,6 +828,18 @@ async def consume_machine_status_and_populate_db():
                         logging.debug(f"Finalized cycle: {cycle_id}")
                     except Exception as e:
                         logging.error(f"Failed to finalize cycle: {e}")
+                        conn.rollback()
+                # 5) Check for analytics data in the set
+                if "analytics" in s and s["analytics"] and cycle_id:
+                    try:
+                        cur.execute(
+                            "INSERT INTO cycle_analytics(cycle_id, json_data) VALUES(%s, %s)",
+                            (cycle_id, json.dumps(s["analytics"]))
+                        )
+                        conn.commit()
+                        logger.info(f"Stored analytics data from machine status for cycle {cycle_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to insert analytics data: {e}")
                         conn.rollback()
 
     except Exception as e:
