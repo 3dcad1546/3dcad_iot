@@ -1,13 +1,4 @@
-import os
-import json
-import time
-import threading
-import select
-import asyncio
-import requests
-import psycopg2
-import psycopg2.extensions
-import uuid
+import os,json,time,threading,select,asyncio,requests,psycopg2,psycopg2.extensions,uuid,logging
 from psycopg2.extras import RealDictCursor
 from psycopg2 import errors
 from datetime import datetime, timedelta
@@ -19,6 +10,15 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
 from fastapi.middleware.cors import CORSMiddleware 
 from pytz import timezone
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("dashboard-api")
+
 
 # ─── Configuration ──────────────────────────────────────────────
 PLC_WRITE_COMMANDS_TOPIC   = os.getenv("PLC_WRITE_COMMANDS_TOPIC",   "plc_write_commands")
@@ -46,7 +46,7 @@ for _ in range(10):
         conn = psycopg2.connect(DB_URL)
         break
     except psycopg2.OperationalError:
-        print("PostgreSQL not ready, retrying in 5s…")
+        logging.error("PostgreSQL not ready, retrying in 5s…")
         time.sleep(5)
 else:
     raise RuntimeError("PostgreSQL not available")
@@ -680,30 +680,31 @@ async def consume_machine_status_and_populate_db():
     )
     await consumer.start()
     
-    print(f"[DEBUG] Started consuming machine_status for cycle processing")
+    logging.debug(f"Started consuming machine_status for cycle processing")
 
     try:
         async for msg in consumer:
             payload = msg.value
+            logging.debug(f"Received message: {json.dumps(payload, indent=2)}")
             ts      = payload["ts"]
             sets    = payload.get("sets", [])
-            print(f"[DEBUG] Processing {len(sets)} sets from machine_status")
+            logging.debug(f"Processing {len(sets)} sets from machine_status")
 
             for s in sets:
                 cycle_id = s["set_id"]               # e.g. "BC1|BC2"
                 if not cycle_id or cycle_id == "|":
-                    print(f"[DEBUG] Skipping invalid cycle_id: '{cycle_id}'")
+                    logging.debug(f"Skipping invalid cycle_id: '{cycle_id}'")
                     continue
                     
                 bc1, bc2 = s["barcodes"]
                 barcode = next((b for b in [bc1, bc2] if b), "UNKNOWN")
                 if not barcode or barcode == "UNKNOWN":
-                    print(f"[DEBUG] Skipping cycle with no valid barcode: {s['barcodes']}")
+                    logging.debug(f" Skipping cycle with no valid barcode: {s['barcodes']}")
                     continue
                     
                 prog     = s["progress"]             # { station: {status_1, status_2, ts}, … }
                 
-                print(f"[DEBUG] Processing cycle: {cycle_id}, barcode: {barcode}")
+                logging.debug(f"Processing cycle: {cycle_id}, barcode: {barcode}")
 
                 # Get current shift
                 cur.execute("""
@@ -723,9 +724,9 @@ async def consume_machine_status_and_populate_db():
                         ON CONFLICT (cycle_id) DO NOTHING
                     """, (cycle_id, barcode, "system", shift_id, "default", s["created_ts"]))
                     conn.commit()
-                    print(f"[DEBUG] Created or found cycle: {cycle_id}")
+                    logging.debug(f" Created or found cycle: {cycle_id}")
                 except Exception as e:
-                    print(f"[ERROR] Failed to insert cycle_master record: {e}")
+                    logging.error(f"Failed to insert cycle_master record: {e}")
                     conn.rollback()
                     continue
 
@@ -746,9 +747,9 @@ async def consume_machine_status_and_populate_db():
                                          VALUES(%s, %s, %s)
                                 """, (cycle_id, stage, vals["ts"]))
                                 conn.commit()
-                                print(f"[DEBUG] Added event for cycle {cycle_id}: {stage}")
+                                logging.debug(f" Added event for cycle {cycle_id}: {stage}")
                         except Exception as e:
-                            print(f"[ERROR] Failed to process cycle event: {e}")
+                            logging.error(f"Failed to process cycle event: {e}")
                             conn.rollback()
 
                 # 4) If unload_station.status_1 == 1 → finalize cycle
@@ -762,18 +763,18 @@ async def consume_machine_status_and_populate_db():
                                AND end_ts IS NULL
                         """, (unload["ts"], cycle_id))
                         conn.commit()
-                        print(f"[DEBUG] Finalized cycle: {cycle_id}")
+                        logging.debug(f"Finalized cycle: {cycle_id}")
                     except Exception as e:
-                        print(f"[ERROR] Failed to finalize cycle: {e}")
+                        logging.error(f"Failed to finalize cycle: {e}")
                         conn.rollback()
 
     except Exception as e:
-        print(f"[ERROR] Unexpected error in machine_status consumer: {e}")
+        logging.error(f" Unexpected error in machine_status consumer: {e}")
         import traceback
         traceback.print_exc()
     finally:
         await consumer.stop()
-        print(f"[DEBUG] Stopped machine_status consumer")
+        logging.debug(f"Stopped machine_status consumer")
 # ─── Startup / Shutdown ───────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():

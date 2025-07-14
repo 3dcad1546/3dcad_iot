@@ -121,19 +121,73 @@ async def init_aiokafka_producer():
 # Simulation of PLC
 async def simulate_plc_data():
     """
-    Periodically send dummy status payloads to Kafka topics so dashboard_api
-    can pick them up over websockets.
+    Periodically send properly structured mock data to match what
+    consume_machine_status_and_populate_db expects.
     """
-    print("🔧 Starting PLC data simulator…")
+    print("🔧 Starting PLC data simulator with barcode sets…")
+    
+    # Generate a new test barcode every few cycles
+    cycle_counter = 0
+    active_sets = []
+    
     while True:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        # build two simple sets
-        set1 = {"InputStation":1, "Trace":0, "MES":1, "ts": now}
-        set2 = {"UnloadStation":0, "OEE":100, "ts": now}
-        payload = {"set1":[set1], "set2":[set2]}
+        
+        # Every 5 cycles, create a new simulated set with barcodes
+        if cycle_counter % 5 == 0:
+            test_barcode1 = f"SIM-{int(time.time())}"
+            test_barcode2 = f"B{random.randint(10000, 99999)}"
+            
+            new_set = {
+                "set_id": f"{test_barcode1}|{test_barcode2}",
+                "barcodes": [test_barcode1, test_barcode2],
+                "progress": {
+                    "loading_station": {"status_1": 1, "status_2": 0, "ts": now},
+                    "trace_station": {"status_1": 0, "status_2": 0, "ts": now},
+                    "process_station": {"status_1": 0, "status_2": 0, "ts": now},
+                    "unload_station": {"status_1": 0, "status_2": 0, "ts": now}
+                },
+                "created_ts": now
+            }
+            active_sets.append(new_set)
+            print(f"Created simulated set: {new_set['set_id']}")
+        
+        # Update progress on existing sets
+        for s in active_sets:
+            # Simulate progress through stations
+            stage = cycle_counter % 4  # 0=loading, 1=trace, 2=process, 3=unload
+            
+            if stage == 0:
+                s["progress"]["loading_station"]["status_1"] = 1
+            elif stage == 1:
+                s["progress"]["loading_station"]["status_1"] = 0
+                s["progress"]["trace_station"]["status_1"] = 1
+            elif stage == 2:
+                s["progress"]["trace_station"]["status_1"] = 0
+                s["progress"]["process_station"]["status_1"] = 1
+            elif stage == 3:
+                s["progress"]["process_station"]["status_1"] = 0
+                s["progress"]["unload_station"]["status_1"] = 1
+            
+            # Update timestamps
+            for station in s["progress"]:
+                s["progress"][station]["ts"] = now
+        
+        # Remove completed sets
+        active_sets = [s for s in active_sets 
+                      if s["progress"]["unload_station"]["status_1"] != 1]
+        
+        # Proper payload format for dashboard_api
+        payload = {"sets": active_sets, "ts": now}
+        
+        # Send to the same topic as the real code
         await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=payload)
-        # also simulate section‐specific topics if you like:
+        print(f"[{now}] Sent {len(active_sets)} simulated sets to {KAFKA_TOPIC_MACHINE_STATUS}")
+        
+        # Also send section-specific data like before
         await aio_producer.send_and_wait(KAFKA_TOPIC_STARTUP_STATUS, value={"status":"OK","ts":now})
+        
+        cycle_counter += 1
         await asyncio.sleep(2)
 
 async def simulate_plc_write_responses():
