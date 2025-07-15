@@ -761,6 +761,7 @@ async def consume_machine_status_and_populate_db():
                 # Remove null bytes from cycle_id
                 if cycle_id:
                     cycle_id = cycle_id.replace("\x00", "")
+                    cycle_id = cycle_id.split("+")[0]
                 print(cycle_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
                 if not cycle_id or cycle_id == "|":
                     logging.debug(f"Skipping invalid cycle_id: '{cycle_id}'")
