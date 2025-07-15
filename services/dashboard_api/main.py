@@ -758,6 +758,9 @@ async def consume_machine_status_and_populate_db():
 
             for s in sets:
                 cycle_id = s["set_id"]
+                # Remove null bytes from cycle_id
+                if cycle_id:
+                    cycle_id = cycle_id.replace("\x00", "")
                 print(cycle_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
                 if not cycle_id or cycle_id == "|":
                     logging.debug(f"Skipping invalid cycle_id: '{cycle_id}'")
@@ -765,10 +768,13 @@ async def consume_machine_status_and_populate_db():
                     
                 bc1, bc2 = s["barcodes"]
                 barcode = next((b for b in [bc1, bc2] if b), "UNKNOWN")
+                # Remove null bytes from barcode
+                if barcode:
+                    barcode = barcode.replace("\x00", "")
                 if not barcode or barcode == "UNKNOWN":
                     logging.debug(f" Skipping cycle with no valid barcode: {s['barcodes']}")
                     continue
-                    
+                
                 prog     = s["progress"]             # { station: {status_1, status_2, ts}, … }
                 
                 logging.debug(f"Processing cycle: {cycle_id}, barcode: {barcode}")

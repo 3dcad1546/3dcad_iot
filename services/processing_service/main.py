@@ -4,6 +4,7 @@ import json
 import signal
 import uuid
 import pathlib
+import logging
 
 import requests
 import httpx
@@ -14,7 +15,15 @@ from aiokafka.errors import NoBrokersAvailable
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import logging
+
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+logger = logging.getLogger("processing-service")
 
 
 # load just the bits map
@@ -109,10 +118,10 @@ async def init_kafka():
               value_serializer=lambda v: json.dumps(v).encode()
             )
             await kafka_producer.start()
-            print("[Processing] Kafka producer started.")
+            logger.info("Kafka producer started.")
             break
         except NoBrokersAvailable:
-            print("[Processing] Kafka unavailable, retrying…")
+            logger.warning("Kafka unavailable, retrying…")
             await asyncio.sleep(3)
     else:
         raise RuntimeError("Cannot connect to Kafka producer")
@@ -125,13 +134,13 @@ async def init_kafka():
       value_deserializer=lambda b: json.loads(b.decode())
     )
     await kafka_consumer.start()
-    print(f"[Processing] subscribed to {RAW_TOPIC}, {TRIGGER_TOPIC}")
+    logger.info(f"Subscribed to {RAW_TOPIC}, {TRIGGER_TOPIC}")
 
 async def shutdown():
     if kafka_consumer: await kafka_consumer.stop()
     if kafka_producer: await kafka_producer.stop()
     pg_conn.close()
-    print("[Processing] shut down cleanly")
+    logger.info("Shut down cleanly")
 
 # ─── Helpers ───────────────────────────────────────────────────────
 async def get_current_operator(token: str) -> str:
@@ -164,6 +173,13 @@ async def process_event(topic: str, msg: dict) -> dict:
         return {"emit": False}
 
     barcode  = msg["barcode"]
+    # Remove null bytes from barcode
+    if barcode:
+        original = barcode
+        barcode = barcode.replace("\x00", "")
+        if original != barcode:
+            logger.info(f"Removed null bytes from barcode: '{original}' -> '{barcode}'")
+        
     is_auto  = msg.get("mode_auto", False)
     token    = msg.get("token")
     operator = await get_current_operator(token) if token else None
@@ -260,7 +276,7 @@ async def process_event(topic: str, msg: dict) -> dict:
 # ─── Main loop ─────────────────────────────────────────────────────
 async def run():
     await init_kafka()
-    print("[Processing] running… Ctrl+C to quit")
+    logger.info("Running… Ctrl+C to quit")
     try:
         async for msg in kafka_consumer:
             topic   = msg.topic
@@ -282,7 +298,9 @@ async def run():
                 pg_conn.commit()
 
     except Exception as e:
-        print("[Processing] Error:", e)
+        logger.error(f"Error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     finally:
         await shutdown()
 
