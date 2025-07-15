@@ -583,7 +583,11 @@ def get_cycles(
             "barcode": r["barcode"],
             "start_ts": r["start_ts"].astimezone(IST),
             "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
-            "events": [{"stage": e["stage"], "ts": e["ts"].astimezone(IST)} for e in (r["events"] or [])]
+            "events": [
+                    {"stage": e["stage"], "ts": e["ts"].astimezone(IST)}
+                    for e in (r["events"] or [])
+                    if e["stage"] is not None and e["ts"] is not None
+                ]
         }
         
         # Add analytics if present
