@@ -757,14 +757,20 @@ async def consume_machine_status_and_populate_db():
             logging.debug(f"Processing {len(sets)} sets from machine_status")
 
             for s in sets:
-                cycle_id = s["set_id"]
-                # Remove null bytes from cycle_id
-                if cycle_id:
-                    cycle_id = cycle_id.replace("\x00", "")
-                print(cycle_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
-                if not cycle_id or cycle_id == "|":
-                    logging.debug(f"Skipping invalid cycle_id: '{cycle_id}'")
+                # Get the original set_id for tracking, but create a proper UUID for the database
+                original_set_id = s["set_id"]
+                # Remove null bytes from original_set_id
+                if original_set_id:
+                    original_set_id = original_set_id.replace("\x00", "")
+                print(original_set_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
+                if not original_set_id or original_set_id == "|":
+                    logging.debug(f"Skipping invalid cycle_id: '{original_set_id}'")
                     continue
+                    
+                # Generate a deterministic UUID based on the set_id
+                # This ensures we get the same UUID each time for the same set_id
+                cycle_id = str(uuid.uuid5(uuid.NAMESPACE_OID, original_set_id))
+                logging.debug(f"Converted set_id '{original_set_id}' to UUID: {cycle_id}")
                     
                 bc1, bc2 = s["barcodes"]
                 barcode = next((b for b in [bc1, bc2] if b), "UNKNOWN")
@@ -777,7 +783,7 @@ async def consume_machine_status_and_populate_db():
                 
                 prog     = s["progress"]             # { station: {status_1, status_2, ts}, … }
                 
-                logging.debug(f"Processing cycle: {cycle_id}, barcode: {barcode}")
+                logging.debug(f"Processing cycle with ID: {cycle_id}, original set_id: {original_set_id}, barcode: {barcode}")
 
                 # Get current shift
                 cur.execute("""

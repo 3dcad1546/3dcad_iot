@@ -4,7 +4,6 @@ import json
 import signal
 import uuid
 import pathlib
-import logging
 
 import requests
 import httpx
@@ -15,7 +14,7 @@ from aiokafka.errors import NoBrokersAvailable
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-
+import logging
 
 # Configure logging
 logging.basicConfig(
@@ -24,7 +23,6 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
 )
 logger = logging.getLogger("processing-service")
-
 
 # load just the bits map
 map_path = os.path.join(os.path.dirname(__file__), "register_map.json")
@@ -179,7 +177,7 @@ async def process_event(topic: str, msg: dict) -> dict:
         barcode = barcode.replace("\x00", "")
         if original != barcode:
             logger.info(f"Removed null bytes from barcode: '{original}' -> '{barcode}'")
-        
+            
     is_auto  = msg.get("mode_auto", False)
     token    = msg.get("token")
     operator = await get_current_operator(token) if token else None
