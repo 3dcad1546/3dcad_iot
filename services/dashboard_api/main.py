@@ -12,6 +12,10 @@ from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafka
 from fastapi.middleware.cors import CORSMiddleware 
 from pytz import timezone
 
+# Ensure log directory exists
+log_dir = "/services/dashboard_api/logs"
+os.makedirs(log_dir, exist_ok=True)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +26,7 @@ logging.basicConfig(
         logging.StreamHandler(),
         # File handler with rotation
         RotatingFileHandler(
-            "/app/logs/dashboard_api.log", 
+            os.path.join(log_dir, "dashboard_api.log"),
             maxBytes=10485760,  # 10MB
             backupCount=5
         )
@@ -753,7 +757,8 @@ async def consume_machine_status_and_populate_db():
             logging.debug(f"Processing {len(sets)} sets from machine_status")
 
             for s in sets:
-                cycle_id = s["set_id"]               # e.g. "BC1|BC2"
+                cycle_id = s["set_id"]
+                print(cycle_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
                 if not cycle_id or cycle_id == "|":
                     logging.debug(f"Skipping invalid cycle_id: '{cycle_id}'")
                     continue
@@ -789,6 +794,7 @@ async def consume_machine_status_and_populate_db():
                     logging.debug(f" Created or found cycle: {cycle_id}")
                 except Exception as e:
                     logging.error(f"Failed to insert cycle_master record: {e}")
+                    logging.debug(f"Raw insert values: cycle_id={repr(cycle_id)}, barcode={repr(barcode)}")
                     conn.rollback()
                     continue
 
