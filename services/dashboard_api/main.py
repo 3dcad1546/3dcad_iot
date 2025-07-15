@@ -757,25 +757,19 @@ async def consume_machine_status_and_populate_db():
             logging.debug(f"Processing {len(sets)} sets from machine_status")
 
             for s in sets:
-
                 # Get the original set_id for tracking, but create a proper UUID for the database
                 original_set_id = s["set_id"]
-                # Remove null bytes from original_set_id
+                
+                # Remove null bytes and + with any digits after it from original_set_id
                 if original_set_id:
                     original_set_id = original_set_id.replace("\x00", "")
-                print(original_set_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
+                    # Remove + and any digits after it
+                    if "+" in original_set_id:
+                        original_set_id = original_set_id.split("+")[0]
+                
+                logger.debug(f"{original_set_id} - Original set_id")               # e.g. "BC1|BC2"
                 if not original_set_id or original_set_id == "|":
                     logging.debug(f"Skipping invalid cycle_id: '{original_set_id}'")
-=======
-                cycle_id = s["set_id"]
-                # Remove null bytes from cycle_id
-                if cycle_id:
-                    cycle_id = cycle_id.replace("\x00", "")
-                    cycle_id = cycle_id.split("+")[0]
-                print(cycle_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
-                if not cycle_id or cycle_id == "|":
-                    logging.debug(f"Skipping invalid cycle_id: '{cycle_id}'")
-
                     continue
                     
                 # Generate a deterministic UUID based on the set_id
@@ -785,9 +779,16 @@ async def consume_machine_status_and_populate_db():
                     
                 bc1, bc2 = s["barcodes"]
                 barcode = next((b for b in [bc1, bc2] if b), "UNKNOWN")
-                # Remove null bytes from barcode
+                # Remove null bytes and + with any digits after it from barcode
                 if barcode:
+                    original_barcode = barcode
                     barcode = barcode.replace("\x00", "")
+                    # Remove + and any digits after it
+                    if "+" in barcode:
+                        barcode = barcode.split("+")[0]
+                    if original_barcode != barcode:
+                        logging.debug(f"Cleaned barcode: '{original_barcode}' -> '{barcode}'")
+                        
                 if not barcode or barcode == "UNKNOWN":
                     logging.debug(f" Skipping cycle with no valid barcode: {s['barcodes']}")
                     continue

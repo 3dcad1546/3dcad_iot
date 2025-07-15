@@ -44,7 +44,7 @@ USER_LOGIN_URL          = os.getenv("USER_LOGIN_URL")
 
 # ─── Postgres setup ───────────────────────────────────────────────
 pg_conn = psycopg2.connect(DB_URL)
-print(pg_conn,"pg_conn")
+logger.info(f"Connected to PostgreSQL: {pg_conn}")
 pg_conn.autocommit = True
 pg_cur  = pg_conn.cursor(cursor_factory=RealDictCursor)
 
@@ -171,12 +171,15 @@ async def process_event(topic: str, msg: dict) -> dict:
         return {"emit": False}
 
     barcode  = msg["barcode"]
-    # Remove null bytes from barcode
+    # Remove null bytes and + with any digits after it from barcode
     if barcode:
         original = barcode
         barcode = barcode.replace("\x00", "")
+        # Remove + and any digits after it
+        if "+" in barcode:
+            barcode = barcode.split("+")[0]
         if original != barcode:
-            logger.info(f"Removed null bytes from barcode: '{original}' -> '{barcode}'")
+            logger.info(f"Cleaned barcode: '{original}' -> '{barcode}'")
             
     is_auto  = msg.get("mode_auto", False)
     token    = msg.get("token")
