@@ -757,6 +757,7 @@ async def consume_machine_status_and_populate_db():
             logging.debug(f"Processing {len(sets)} sets from machine_status")
 
             for s in sets:
+
                 # Get the original set_id for tracking, but create a proper UUID for the database
                 original_set_id = s["set_id"]
                 # Remove null bytes from original_set_id
@@ -765,6 +766,16 @@ async def consume_machine_status_and_populate_db():
                 print(original_set_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
                 if not original_set_id or original_set_id == "|":
                     logging.debug(f"Skipping invalid cycle_id: '{original_set_id}'")
+=======
+                cycle_id = s["set_id"]
+                # Remove null bytes from cycle_id
+                if cycle_id:
+                    cycle_id = cycle_id.replace("\x00", "")
+                    cycle_id = cycle_id.split("+")[0]
+                print(cycle_id,"cycleeeeeeeeeeeeeeeee")               # e.g. "BC1|BC2"
+                if not cycle_id or cycle_id == "|":
+                    logging.debug(f"Skipping invalid cycle_id: '{cycle_id}'")
+
                     continue
                     
                 # Generate a deterministic UUID based on the set_id
