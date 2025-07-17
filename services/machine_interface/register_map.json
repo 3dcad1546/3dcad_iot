@@ -79,8 +79,8 @@
         "barcode_block_2": [2280, 20]
         },
         "unload_station": {
-        "status_1":         [2600, 16],
-        "status_2":         [2600, 17],
+        "status_1":         [2606, 0],
+        "status_2":         [2606, 1],
         "barcode_block_1": [2120, 20],
         "barcode_block_2": [2320, 20]
         }
@@ -1066,32 +1066,38 @@
     },
     "oee": {
         "read": {
-            "MACHINE_STATUS_RUN": 4700,
-            "MACHINE_STATUS_IDLE": 4701,
-            "MACHINE_STATUS_STOPPED": 4702,
-            "MACHINE_STATUS_BREAKDOWN": 4703,
-            "MACHINE_STATUS_MAINTENANCE_MODE": 4704,
-            "MACHINE_AVAILABILITY_STATUS": 4705,
-            "MACHINE_PLANNED_DOWNTIME_STATUS": 4706,
-            "CYCLE_START_STOP_FLAG": 4707,
-            "ALARM_MESSAGE_STRING": [
-                4708,
-                10
-            ],
-            "ACTUAL_CYCLE_TIME_MS": 4718,
-            "TARGET_CYCLE_TIME_MS": 4719,
-            "OK_PARTS_COUNT_TOTAL": 4720,
-            "NOK_PARTS_COUNT_TOTAL": 4721,
-            "TOTAL_PART_COUNT_GLOBAL": 4722,
-            "SHIFT_A_OK_PARTS_COUNT": 4723,
-            "SHIFT_A_NOK_PARTS_COUNT": 4724,
-            "SHIFT_A_TOTAL_PART_COUNT": 4725,
-            "SHIFT_B_OK_PARTS_COUNT": 4726,
-            "SHIFT_B_NOK_PARTS_COUNT": 4727,
-            "SHIFT_B_TOTAL_PART_COUNT": 4728,
-            "SHIFT_C_OK_PARTS_COUNT": 4729,
-            "SHIFT_C_NOK_PARTS_COUNT": 4730,
-            "SHIFT_C_TOTAL_PART_COUNT": 4731
+            
+            "Cycle_Running_ON": { "address": 1900, "type": "holding"},
+            "Idle": { "address": 1900, "type": "holding" },
+            "Stopped_OFF": { "address": 1900, "type": "holding" },
+            "Breakdown": { "address": 1900, "type": "holding"},
+            "Maintenance_Mode": { "address": 1900, "type": "holding" },
+            "Machine_Availability_Status": { "address": 1900, "type": "holding" },
+            "Planned_Downtime_Status": { "address": 1900, "type": "holding" },
+            "Cycle_Start_Stop": { "address": 1900, "type": "holding" },
+            "Alarm_Signals": { "address": 1900, "type": "holding"},
+            "Cycle_Time": { "address": 1910, "type": "holding"},
+            "Target_Cycle_Time": { "address": 1912, "type": "holding" },
+            "OK_Parts_Count": { "address": 1914, "type": "holding" },
+            "NOK_Parts_Count": { "address": 1916, "type": "holding"},
+            "Not_Read_Parts_Count": { "address": 1918, "type": "holding"},
+            "Total_Part_count": { "address": 1919, "type": "holding" },
+            "Shift_A_OK_Parts_Count": { "address": 1920, "type": "holding"},
+            "Shift_A_NOK_Parts_Count": { "address": 1922, "type": "holding" },
+            "Shift_A_Not_Read_Parts_Count": { "address": 1924, "type": "holding" },
+            "Shift_A_Total_Parts_Count": { "address": 1928, "type": "holding" },
+            "Shift_B_OK_Parts_Count": { "address": 1930, "type": "holding"},
+            "Shift_B_NOK_Parts_Count": { "address": 1932, "type": "holding"},
+            "Shift_B_Not_Read_Parts_Count": { "address": 1934, "type": "holding" },
+            "Shift_B_Total_Parts_Count": { "address": 1938, "type": "holding" },
+            "Shift_C_OK_Parts_Count": { "address": 1940, "type": "holding" },
+            "Shift_C_NOK_Parts_Count": { "address": 1942, "type": "holding" },
+            "Shift_C_Not_Read_Parts_Count": { "address": 1944, "type": "holding" },
+            "Shift_C_Total_Parts_Count": { "address": 1948, "type": "holding" }
+
+
+
+
         }
     },
  "alarm": {

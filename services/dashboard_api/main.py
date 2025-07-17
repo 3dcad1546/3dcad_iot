@@ -450,8 +450,8 @@ def delete_variant(variant_id: int, user: str = Depends(require_login)):
 
 #receive webhook data
 @app.post("/edge/api/v1/analytics")
-async def receive_analytics(request: Request):
-    data = await request.json()
+async def receive_analytics(data: Dict):
+    # data = await request.json()
     
     # Extract cycle_id from the analytics data (adjust this based on your actual data structure)
     # Assuming the analytics data contains a reference to the barcode/cycle
@@ -478,8 +478,15 @@ async def receive_analytics(request: Request):
             (cycle_id, json.dumps(data))
         )
         conn.commit()
+
+        # Broadcast raw JSON string or dict serialized to JSON
+        await mgr.broadcast("analytics", json.dumps({
+            "cycle_id": cycle_id,
+            "barcode": barcode,
+            "analytics": data
+        }))
         
-        logger.info(f"Stored analytics data for cycle {cycle_id}, barcode {barcode}")
+        logger.info(f"Stored and broadcasted analytics data for cycle {cycle_id}, barcode {barcode}")
         return {"status": "success", "cycle_id": cycle_id}
         
     except Exception as e:
@@ -607,7 +614,9 @@ WS_TOPICS = {
     "io-status":      IO_STATUS,
     "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
-    "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC
+    "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
+    "analytics": "other_streams_if_any",
+    
 }
 
 class ConnectionManager:
@@ -740,6 +749,25 @@ async def ws_stream(stream: str, ws: WebSocket, operator: str = Depends(websocke
     except WebSocketDisconnect:
         mgr.disconnect(stream, ws)
 
+# websocket for realtime vision data
+@app.websocket("/ws/analytics")
+async def websocket_analytics(
+    ws: WebSocket,
+    operator: str = Depends(websocket_auth)  # token validated here
+):
+    stream = "analytics"
+    if stream not in WS_TOPICS:
+        await ws.close(code=1008, reason="Unknown stream")
+        return
+    
+    await mgr.connect(stream, ws)
+    try:
+        while True:
+            await ws.receive_text()  # keep alive, or handle client messages
+    except WebSocketDisconnect:
+        mgr.disconnect(stream, ws)
+
+
 async def consume_machine_status_and_populate_db():
     # 1) Create consumer
     consumer = AIOKafkaConsumer(
@@ -765,11 +793,11 @@ async def consume_machine_status_and_populate_db():
                 original_set_id = s["set_id"]
                 
                 # Remove null bytes and + with any digits after it from original_set_id
-                if original_set_id:
-                    original_set_id = original_set_id.replace("\x00", "")
+                # if original_set_id:
+                #     original_set_id = original_set_id.replace("\x00", "")
                     # Remove + and any digits after it
-                    if "+" in original_set_id:
-                        original_set_id = original_set_id.split("+")[0]
+                    # if "+" in original_set_id:
+                    #     original_set_id = original_set_id.split("+")[0]
                 
                 logger.debug(f"{original_set_id} - Original set_id")               # e.g. "BC1|BC2"
                 if not original_set_id or original_set_id == "|":
@@ -785,13 +813,13 @@ async def consume_machine_status_and_populate_db():
                 barcode = next((b for b in [bc1, bc2] if b), "UNKNOWN")
                 # Remove null bytes and + with any digits after it from barcode
                 if barcode:
-                    original_barcode = barcode
+                    barcode = barcode
                     barcode = barcode.replace("\x00", "")
                     # Remove + and any digits after it
-                    if "+" in barcode:
-                        barcode = barcode.split("+")[0]
-                    if original_barcode != barcode:
-                        logging.debug(f"Cleaned barcode: '{original_barcode}' -> '{barcode}'")
+                    # if "+" in barcode:
+                    #     barcode = barcode.split("+")[0]
+                    # if original_barcode != barcode:
+                    #     logging.debug(f"Cleaned barcode: '{original_barcode}' -> '{barcode}'")
                         
                 if not barcode or barcode == "UNKNOWN":
                     logging.debug(f" Skipping cycle with no valid barcode: {s['barcodes']}")

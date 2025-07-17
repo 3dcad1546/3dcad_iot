@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS plc_test (
 
 -- 14) Cycle master + per-stage events
 CREATE TABLE IF NOT EXISTS cycle_master (
-  cycle_id      UUID        PRIMARY KEY,
+  cycle_id      TEXT        PRIMARY KEY,
   operator      TEXT        NOT NULL,
   variant       TEXT        NOT NULL,
   barcode       TEXT        NOT NULL,
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS cycle_master (
 
 CREATE TABLE IF NOT EXISTS cycle_event (
   id          SERIAL      PRIMARY KEY,
-  cycle_id    UUID        NOT NULL REFERENCES cycle_master(cycle_id),
+  cycle_id    TEXT        NOT NULL REFERENCES cycle_master(cycle_id),
   stage       TEXT        NOT NULL,
   ts          TIMESTAMP   NOT NULL DEFAULT NOW()
 );
