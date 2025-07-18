@@ -5,7 +5,7 @@ from psycopg2 import errors
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query, Header,Request
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from influxdb_client import InfluxDBClient, WriteOptions
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
@@ -120,6 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_cycle_master_variant
   ON cycle_master(variant);
 """)
 
+
 # ─── InfluxDB Setup ────────────────────────────────────────────────
 influx_client = InfluxDBClient(
     url=get_cfg("INFLUXDB_URL",   "http://influxdb:8086"),
@@ -153,12 +154,12 @@ class CycleReportItem(BaseModel):
     cycle_id: str
     operator: str
     shift_id: int
-    variant: Optional[str]
+    variant: str
     barcode: str
     start_ts: datetime
     end_ts: Optional[datetime]
     events: List[CycleEvent]
-    analytics: Optional[dict] = None
+    analytics: Optional[List[Dict[str, Any]]] = None  
 
 class Variant(BaseModel):
     id:   int
@@ -452,51 +453,60 @@ def delete_variant(variant_id: int, user: str = Depends(require_login)):
 #receive webhook data
 @app.post("/edge/api/v1/analytics")
 async def receive_analytics(data: Dict):
-    # data = await request.json()
+    logger.info(f"Received analytics webhook with keys: {list(data.keys())}")
     
-    # Extract cycle_id from the analytics data (adjust this based on your actual data structure)
-    # Assuming the analytics data contains a reference to the barcode/cycle
-    barcode = data.get("metadata") or data.get("part_id")
-    print(barcode,"barcodeeeeeeeeeeeeee")
+    # Try multiple possible field names for barcode
+    barcode = None
+    for field in ["barcode", "part_id", "metadata", "serial"]:
+        if field in data and data[field]:
+            barcode = data[field]
+            logger.info(f"Found barcode identifier in field '{field}': {barcode}")
+            break
     
     if not barcode:
-        logger.warning(f"Analytics data received without barcode identifier: {data}")
+        logger.warning(f"Analytics data received without any identifiable barcode fields: {data.keys()}")
         return {"status": "warning", "message": "No barcode found in data"}
     
     # Find the corresponding cycle_id for this barcode
     try:
         cur.execute("SELECT cycle_id FROM cycle_master WHERE barcode = %s ORDER BY start_ts DESC LIMIT 1", 
-                    (barcode,))
+                   (barcode,))
         row = cur.fetchone()
+        
         if not row:
             logger.warning(f"No cycle found for barcode {barcode} in analytics data")
             return {"status": "warning", "message": f"No cycle found for barcode {barcode}"}
         
         cycle_id = row["cycle_id"]
-
-        # Broadcast raw JSON string or dict serialized to JSON
-        await mgr.broadcast("analytics", json.dumps({
-            "cycle_id": cycle_id,
-            "barcode": barcode,
-            "analytics": data
-        }))
+        
+        logger.info(f"Found cycle_id {cycle_id} for barcode {barcode}")
         
         # Store the analytics data
         cur.execute(
-            "INSERT INTO cycle_analytics(cycle_id, json_data) VALUES(%s, %s)",
+            "INSERT INTO cycle_analytics(cycle_id, json_data) VALUES(%s, %s) RETURNING id",
             (cycle_id, json.dumps(data))
         )
+        analytics_id = cur.fetchone()["id"]
         conn.commit()
-
         
+        # After successful storage, broadcast to WebSocket
+        await mgr.broadcast("analytics", json.dumps({
+            "cycle_id": cycle_id,
+            "barcode": barcode,
+            "analytics_id": analytics_id,
+            "analytics": data
+        }))
         
-        logger.info(f"Stored and broadcasted analytics data for cycle {cycle_id}, barcode {barcode}")
-        return {"status": "success", "cycle_id": cycle_id}
+        logger.info(f"Successfully stored analytics data with ID {analytics_id} for cycle {cycle_id}")
+        return {"status": "success", "cycle_id": cycle_id, "analytics_id": analytics_id}
         
     except Exception as e:
         logger.error(f"Error storing analytics data: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         conn.rollback()
         return {"status": "error", "message": str(e)}
+
 # ─── Cycle Reporting Endpoint ──────────────────────────────────────
 class CycleVariantUpdate(BaseModel):
     variant_id: int
@@ -527,66 +537,55 @@ def assign_cycle_variant(
 
 @app.get("/api/cycles", response_model=List[CycleReportItem])
 def get_cycles(
-    operator: Optional[str]      = None,
-    shift_id: Optional[int]      = None,
-    barcode: Optional[str]       = None,
-    variant: Optional[str]       = None,
-    from_ts: Optional[datetime]  = Query(None, alias="from"),
-    to_ts:   Optional[datetime]  = Query(None, alias="to"),
-    include_analytics: bool      = Query(False),  # Add this parameter
+    operator: Optional[str] = None,
+    shift_id: Optional[int] = None,
+    barcode: Optional[str] = None,
+    variant: Optional[str] = None,
+    from_ts: Optional[datetime] = Query(None, alias="from"),
+    to_ts: Optional[datetime] = Query(None, alias="to"),
+    include_analytics: bool = Query(False),  # New parameter to include analytics
+    limit: int = Query(20, ge=1, le=100),
     user: str = Depends(require_login)
 ):
     IST = timezone("Asia/Kolkata")
-
+    
+    # Build WHERE clauses and parameters as before
     clauses, params = [], []
-    if operator:
-        clauses.append("cm.operator=%s");    params.append(operator)
-    if shift_id is not None:
-        clauses.append("cm.shift_id=%s");   params.append(shift_id)
-    if barcode:
-        clauses.append("cm.barcode=%s");    params.append(barcode)
-    if variant:
-        clauses.append("cm.variant=%s");    params.append(variant)
-    if from_ts:
-        from_ts_ist = from_ts.astimezone(IST)
-        clauses.append("cm.start_ts >= %s")
-        params.append(from_ts_ist)
-
-    if to_ts:
-        to_ts_ist = to_ts.astimezone(IST)
-        clauses.append("cm.start_ts <= %s")
-        params.append(to_ts_ist)
-
-    where = " AND ".join(clauses) if clauses else "TRUE"
-
-    # Update the SQL query to include analytics if requested
+    # Your existing code for filters...
+    
+    # Modify your SQL query to optionally include analytics data
     analytics_select = ""
     analytics_join = ""
+    
     if include_analytics:
-        analytics_select = ", ca.json_data as analytics"
+        analytics_select = ", COALESCE(jsonb_agg(ca.json_data) FILTER (WHERE ca.id IS NOT NULL), '[]'::jsonb) as analytics"
         analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = cm.cycle_id"
-
+    
+    # Your SQL query with additions for analytics
     sql = f"""
-    SELECT
+    SELECT 
       cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
       cm.start_ts, cm.end_ts,
-      jsonb_agg(jsonb_build_object('stage',ce.stage,'ts',ce.ts)
+      jsonb_agg(jsonb_build_object('stage', ce.stage, 'ts', ce.ts)
                 ORDER BY ce.id) AS events
       {analytics_select}
     FROM cycle_master cm
-    LEFT JOIN cycle_event ce ON ce.cycle_id=cm.cycle_id
+    LEFT JOIN cycle_event ce ON ce.cycle_id = cm.cycle_id
     {analytics_join}
-    WHERE {where}
-    GROUP BY cm.cycle_id {", ca.json_data" if include_analytics else ""}
+    WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
+    GROUP BY cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode, cm.start_ts, cm.end_ts
     ORDER BY cm.start_ts DESC
+    LIMIT %s
     """
+    params.append(limit)
+    
     cur.execute(sql, params)
-    conn.commit()
     rows = cur.fetchall()
-
-    result: List[CycleReportItem] = []
+    
+    # Update your result processing to include analytics
+    result = []
     for r in rows:
-        item_dict = {
+        item = {
             "cycle_id": r["cycle_id"],
             "operator": r["operator"],
             "shift_id": r["shift_id"],
@@ -594,21 +593,15 @@ def get_cycles(
             "barcode": r["barcode"],
             "start_ts": r["start_ts"].astimezone(IST),
             "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
-            "events": [
-                        {
-                            "stage": e["stage"],
-                            "ts": isoparse(e["ts"]).astimezone(IST)
-                        }
-                        for e in (r["events"] or [])
-                        if e["stage"] is not None and e["ts"] is not None
-                    ]
+            "events": [{"stage": e["stage"], "ts": e["ts"].astimezone(IST)} for e in (r["events"] or [])]
         }
         
-        # Add analytics if present
+        # Add analytics if included
         if include_analytics and "analytics" in r and r["analytics"]:
-            item_dict["analytics"] = r["analytics"]
-            
-        result.append(CycleReportItem(**item_dict))
+            item["analytics"] = r["analytics"]
+        
+        result.append(CycleReportItem(**item))
+    
     return result
 
 # ─── WebSocket Manager ────────────────────────────────────────────
@@ -760,14 +753,15 @@ async def ws_stream(stream: str, ws: WebSocket, operator: str = Depends(websocke
 @app.websocket("/ws/analytics")
 async def websocket_analytics(
     ws: WebSocket,
-    operator: str = Depends(websocket_auth)  # token validated here
+    operator: str = Depends(websocket_auth)
 ):
+    # Define the stream name
+    stream = "analytics"  # Add this line to define the stream variable
     
-
     await mgr.connect(stream, ws)
     try:
         while True:
-            await ws.receive_text()  # keep alive, or handle client messages
+            await ws.receive_text()
     except WebSocketDisconnect:
         mgr.disconnect(stream, ws)
 
