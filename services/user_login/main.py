@@ -186,14 +186,25 @@ def create_user(u: UserCreate):
     row = cur.fetchone()
     return UserOut(**dict(zip([c.name for c in cur.description], row)))
 
-@app.get("/api/users/{username}", response_model=UserOut)
-def read_user(username: str):
-    print("cominginside")
-    cur.execute("SELECT id,first_name,last_name,username,role FROM users WHERE username=%s", (username,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(404, "User not found")
-    return UserOut(**dict(zip([c.name for c in cur.description], row)))
+@app.get("/api/users", response_model=List[UserOut])
+def read_users():
+    cur.execute("SELECT id, first_name, last_name, username, role FROM users")
+    rows = cur.fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No users found")
+    # Convert each row to a dict matching UserOut fields
+    results = [UserOut(**dict(zip([c.name for c in cur.description], row))) for row in rows]
+    return results
+
+
+# @app.get("/api/users/{username}", response_model=UserOut)
+# def read_user(username: str):
+#     print("cominginside")
+#     cur.execute("SELECT id,first_name,last_name,username,role FROM users WHERE username=%s", (username,))
+#     row = cur.fetchone()
+#     if not row:
+#         raise HTTPException(404, "User not found")
+#     return UserOut(**dict(zip([c.name for c in cur.description], row)))
 
 @app.put("/api/users/{username}", response_model=UserOut)
 def update_user(username: str, u: UserCreate):
