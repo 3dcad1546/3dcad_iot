@@ -336,10 +336,10 @@
     },
     "auto": {
         "read": {
-            "OK": 3000,
-            "NOK": 3001,
-            "NR": 3002,
-            "SKIP": 3004,
+            "OK": 1950,
+            "NOK": 1952,
+            "NR": 1954,
+            "SKIP": 1956,
             "ALARM": 3200,
             "RUNNING_MSG": 3201,
             "PLC_KEEPALIVE_BIT": 3202,

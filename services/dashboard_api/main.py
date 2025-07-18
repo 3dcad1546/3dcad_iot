@@ -456,7 +456,8 @@ async def receive_analytics(data: Dict):
     
     # Extract cycle_id from the analytics data (adjust this based on your actual data structure)
     # Assuming the analytics data contains a reference to the barcode/cycle
-    barcode = data.get("barcode") or data.get("part_id")
+    barcode = data.get("metadata") or data.get("part_id")
+    print(barcode,"barcodeeeeeeeeeeeeee")
     
     if not barcode:
         logger.warning(f"Analytics data received without barcode identifier: {data}")
@@ -472,6 +473,13 @@ async def receive_analytics(data: Dict):
             return {"status": "warning", "message": f"No cycle found for barcode {barcode}"}
         
         cycle_id = row["cycle_id"]
+
+        # Broadcast raw JSON string or dict serialized to JSON
+        await mgr.broadcast("analytics", json.dumps({
+            "cycle_id": cycle_id,
+            "barcode": barcode,
+            "analytics": data
+        }))
         
         # Store the analytics data
         cur.execute(
@@ -480,12 +488,7 @@ async def receive_analytics(data: Dict):
         )
         conn.commit()
 
-        # Broadcast raw JSON string or dict serialized to JSON
-        await mgr.broadcast("analytics", json.dumps({
-            "cycle_id": cycle_id,
-            "barcode": barcode,
-            "analytics": data
-        }))
+        
         
         logger.info(f"Stored and broadcasted analytics data for cycle {cycle_id}, barcode {barcode}")
         return {"status": "success", "cycle_id": cycle_id}
@@ -759,11 +762,8 @@ async def websocket_analytics(
     ws: WebSocket,
     operator: str = Depends(websocket_auth)  # token validated here
 ):
-    stream = "analytics"
-    if stream not in WS_TOPICS:
-        await ws.close(code=1008, reason="Unknown stream")
-        return
     
+
     await mgr.connect(stream, ws)
     try:
         while True:
@@ -818,7 +818,7 @@ async def consume_machine_status_and_populate_db():
                 # Remove null bytes and + with any digits after it from barcode
                 if barcode:
                     barcode = barcode
-                    barcode = barcode.replace("\x00", "")
+                    barcode = barcode.replace("\x00", "").replace("\r", "")
                     # Remove + and any digits after it
                     # if "+" in barcode:
                     #     barcode = barcode.split("+")[0]
