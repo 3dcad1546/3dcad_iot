@@ -130,10 +130,13 @@ CREATE TABLE IF NOT EXISTS error_logs (
 
 -- 10) Local users for admin & engineer
 CREATE TABLE IF NOT EXISTS users (
-  username      TEXT       PRIMARY KEY,
-  password_hash TEXT       NOT NULL,
-  role          user_role  NOT NULL
-);
+  id           UUID PRIMARY KEY ,
+  first_name   TEXT NOT NULL,
+  last_name    TEXT NOT NULL,
+  username     TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role         user_role NOT NULL
+)
 
 INSERT INTO users (username, password_hash, role) VALUES
   ('admin1', '$2b$12$KIX/OKIXlh1pGi1H/abc00abc1234567890abcdefghiJklmnopqr', 'admin'),

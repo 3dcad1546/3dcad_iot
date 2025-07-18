@@ -11,6 +11,7 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafkaNoBrokersAvailable
 from fastapi.middleware.cors import CORSMiddleware 
 from pytz import timezone
+from dateutil.parser import isoparse
 
 # Ensure log directory exists
 log_dir = "/services/dashboard_api/logs"
@@ -591,10 +592,13 @@ def get_cycles(
             "start_ts": r["start_ts"].astimezone(IST),
             "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
             "events": [
-                    {"stage": e["stage"], "ts": e["ts"].astimezone(IST)}
-                    for e in (r["events"] or [])
-                    if e["stage"] is not None and e["ts"] is not None
-                ]
+                        {
+                            "stage": e["stage"],
+                            "ts": isoparse(e["ts"]).astimezone(IST)
+                        }
+                        for e in (r["events"] or [])
+                        if e["stage"] is not None and e["ts"] is not None
+                    ]
         }
         
         # Add analytics if present
