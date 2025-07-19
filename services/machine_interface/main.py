@@ -696,31 +696,60 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
 
 async def listen_for_login_status(client: AsyncModbusTcpClient):
     """
-    Consume login_status from Kafka and write to PLC register 3309:
-      status=1 → user logged in
-      status=0 → auto‐logout
-      status=2 → manual logout
+    Consume login commands from the PLC_WRITE_COMMANDS topic and write to PLC register 3309:
+      value=1 → user logged in
+      value=0 → auto‐logout
+      value=2 → manual logout
     """
     consumer = AIOKafkaConsumer(
-        LOGIN_TOPIC,
+        KAFKA_TOPIC_WRITE_COMMANDS,  # Change from LOGIN_TOPIC to KAFKA_TOPIC_WRITE_COMMANDS
         bootstrap_servers=KAFKA_BROKER,
         group_id="login-status-listener",
         value_deserializer=lambda b: json.loads(b.decode("utf-8"))
     )
     await consumer.start()
-    print(f"[LoginListener] consuming topic {LOGIN_TOPIC}")
+    logger.info(f"[LoginListener] consuming topic {KAFKA_TOPIC_WRITE_COMMANDS}")
+    
     try:
         async for msg in consumer:
-            payload = msg.value
-            status  = int(payload.get("status", 0))
-            print(f"[LoginListener] got status={status}, writing to PLC reg {LOGIN_REGISTER}")
-            # write_register returns a Deferred—await it
-            wr = await client.write_register(LOGIN_REGISTER, status)
-            if wr.isError():
-                print(f"[LoginListener] Write error: {wr}")
+            command = msg.value
+            section = command.get("section")
+            tag_name = command.get("tag_name")
+            
+            # Only process login-related commands
+            if section == "login" and tag_name == "login":
+                value = command.get("value")
+                request_id = command.get("request_id")
+                
+                if value is not None:
+                    status = int(value)
+                    logger.info(f"[LoginListener] got login status={status}, writing to PLC reg {LOGIN_REGISTER}")
+                    
+                    # Write to PLC register
+                    wr = await client.write_register(LOGIN_REGISTER, status)
+                    
+                    # Send response
+                    response = {
+                        "request_id": request_id,
+                        "status": "SUCCESS" if not wr.isError() else "FAILED",
+                        "message": "Login status written successfully" if not wr.isError() else f"Login write error: {wr}",
+                        "original_command": command,
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S")
+                    }
+                    
+                    # Send response back to Kafka
+                    if aio_producer:
+                        await aio_producer.send(KAFKA_TOPIC_WRITE_RESPONSES, value=response)
+                        
+                    if wr.isError():
+                        logger.error(f"[LoginListener] Write error: {wr}")
+                    else:
+                        logger.info(f"[LoginListener] Successfully wrote status {status} to register {LOGIN_REGISTER}")
+    except Exception as e:
+        logger.error(f"[LoginListener] Error: {e}")
     finally:
         await consumer.stop()
-        print("[LoginListener] stopped")
+        logger.info("[LoginListener] stopped")
 
 
 # ─── Main ──────────────────────────────────────────────────────────────
