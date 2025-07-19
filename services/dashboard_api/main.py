@@ -543,23 +543,36 @@ def get_cycles(
     variant: Optional[str] = None,
     from_ts: Optional[datetime] = Query(None, alias="from"),
     to_ts: Optional[datetime] = Query(None, alias="to"),
-    include_analytics: bool = Query(False),  # New parameter to include analytics
+    include_analytics: bool = Query(False),
     limit: int = Query(20, ge=1, le=100),
     user: str = Depends(require_login)
 ):
     IST = timezone("Asia/Kolkata")
     
-    # Build WHERE clauses and parameters as before
+    # Build WHERE clauses
     clauses, params = [], []
-    # Your existing code for filters...
+    if operator:
+        clauses.append("cm.operator=%s"); params.append(operator)
+    if shift_id is not None:
+        clauses.append("cm.shift_id=%s"); params.append(shift_id)
+    if barcode:
+        clauses.append("cm.barcode=%s"); params.append(barcode)
+    if variant:
+        clauses.append("cm.variant=%s"); params.append(variant)
+    if from_ts:
+        from_ts_ist = from_ts.astimezone(IST)
+        clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
+    if to_ts:
+        to_ts_ist = to_ts.astimezone(IST)
+        clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
     
-    # Modify your SQL query to optionally include analytics data
+    # Add explicit type casting for cycle_id comparison
     analytics_select = ""
     analytics_join = ""
     
     if include_analytics:
         analytics_select = ", COALESCE(jsonb_agg(ca.json_data) FILTER (WHERE ca.id IS NOT NULL), '[]'::jsonb) as analytics"
-        analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = cm.cycle_id"
+        analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = CAST(cm.cycle_id AS TEXT)"
     
     # Your SQL query with additions for analytics
     sql = f"""
