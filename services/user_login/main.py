@@ -26,7 +26,7 @@ DB_URL       = os.getenv("DB_URL","postgresql://edge:edgepass@postgres:5432/edge
 KAFKA_BOOT   = os.getenv("KAFKA_BROKER","kafka:9092")
 PLC_IP       = os.getenv("PLC_IP","192.168.10.3")
 PLC_PORT     = int(os.getenv("PLC_PORT","502"))
-LOGIN_BIT    = int(os.getenv("MODE_REGISTER","3309"))   # PLC register for login
+LOGIN_BIT    = int(os.getenv("MODE_REGISTER","1960"))   # PLC register for login
 
 # connect to Postgres
 for _ in range(10):

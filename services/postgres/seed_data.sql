@@ -28,8 +28,8 @@ INSERT INTO plc_test (name, param1, param2, param3, param4, param5, param6) VALU
 -- Seed Shift Master (if not already seeded)
 INSERT INTO shift_master (name, start_time, end_time) VALUES
   ('Shift A', '06:00:00', '14:00:00'),
-  ('Shift B', '14:00:00', '18:30:00'),
-  ('Shift C', '18:30:00', '06:00:00')
+  ('Shift B', '14:00:00', '17:30:00'),
+  ('Shift C', '17:30:00', '06:00:00')
 ON CONFLICT (name) DO UPDATE SET
   start_time = EXCLUDED.start_time,
   end_time   = EXCLUDED.end_time;
