@@ -391,6 +391,14 @@
             "START_ACK": 3300
     }
     },
+
+    "auto-logout": {
+        
+        "write": {
+            "logout": [1960, 20]
+    }
+    },
+
     "io": {
         "read": {
   "X020": {"address": 1000, "type": "coil"},

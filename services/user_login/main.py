@@ -448,60 +448,142 @@ def current_shift():
     return None,None,None,None
 
 # ─── auto-logout watcher ────────────────────────────────────────
+# async def shift_watcher():
+#     while True:
+#         sid,name,st,et = current_shift()
+#         if sid:
+#             # compute next end
+#             today = datetime.now().date()
+#             print(today,"todayy")
+#             end_dt = datetime.combine(today, et)
+#             print(end_dt,"end_dt")
+#             if et < st:
+#                 end_dt += timedelta(days=1)
+#             await asyncio.sleep(max((end_dt - datetime.now()).total_seconds(), 0))
+
+#             # read current PLC login‐bit
+#             client = AsyncModbusTcpClient(host=PLC_IP, port=PLC_PORT)
+#             await client.connect()
+#             prev = None
+#             if client.connected:
+#                 rr = await client.read_holding_registers(address=LOGIN_BIT,count=1)
+#                 if not rr.isError():
+#                     prev = rr.registers[0]
+#             await client.close()
+
+#             # log in auto_status_log
+#             cur.execute("""
+#               INSERT INTO auto_status_log(shift_id,status_val,ts)
+#               VALUES(%s,%s,NOW())
+#             """,(sid,prev))
+#             conn.commit()
+
+#             # mark operator_sessions
+#             cur.execute("""
+#               UPDATE operator_sessions
+#                  SET logout_ts=NOW()
+#                WHERE shift_id=%s AND logout_ts IS NULL
+#             """,(sid,))
+#             conn.commit()
+
+#             # send PLC write=0
+#             req_id = str(uuid.uuid4())
+#             await producer.send_and_wait("plc_write_commands", {
+#                 "section":"login","tag_name":"login","value":0,"request_id":req_id
+#             })
+
+#             # WS broadcast
+#             await ws_mgr.broadcast({
+#               "event":"auto-logout",
+#               "shift": name,
+#               "prev_status": prev,
+#               "ts": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+#             })
+
+#         else:
+#             await asyncio.sleep(300)  # no active shift
+
 async def shift_watcher():
     while True:
-        sid,name,st,et = current_shift()
+        
+        sid, name, st, et = current_shift()
         if sid:
-            # compute next end
-            today = datetime.now().date()
-            print(today,"todayy")
-            end_dt = datetime.combine(today, et)
-            print(end_dt,"end_dt")
+            tz = ZoneInfo("Asia/Kolkata")
+            now = datetime.now(tz)
+            today = now.date()
+            end_dt = datetime.combine(today, et, tzinfo=tz)
+            
             if et < st:
                 end_dt += timedelta(days=1)
-            await asyncio.sleep(max((end_dt - datetime.now()).total_seconds(), 0))
+                
+            # sleep_duration = max((end_dt - datetime.now()).total_seconds(), 0)
+            sleep_duration = max((end_dt - now).total_seconds(), 0)
+            
+            # FOR TESTING purpose can use this: Override actual sleep duration
+            # print(f"[INFO] (TEST MODE) Overriding sleep duration to 5 seconds...")
+            # sleep_duration = 5
 
-            # read current PLC login‐bit
+            await asyncio.sleep(sleep_duration)
+
             client = AsyncModbusTcpClient(host=PLC_IP, port=PLC_PORT)
             await client.connect()
+
             prev = None
             if client.connected:
-                rr = await client.read_holding_registers(address=LOGIN_BIT,count=1)
+                print("[INFO] PLC connected successfully.")
+                rr = await client.read_holding_registers(address=LOGIN_BIT, count=1)
                 if not rr.isError():
                     prev = rr.registers[0]
-            await client.close()
+                    print(f"[DEBUG] Read login bit from PLC: {prev}")
+                else:
+                    print("[WARNING] Error reading holding register from PLC.")
+            else:
+                print("[ERROR] PLC connection failed.")
 
-            # log in auto_status_log
+            # await client.close()
+            print("[INFO] PLC connection closed.")
+
+            print("[INFO] Logging auto logout status to 'auto_status_log' table...")
             cur.execute("""
-              INSERT INTO auto_status_log(shift_id,status_val,ts)
-              VALUES(%s,%s,NOW())
-            """,(sid,prev))
+              INSERT INTO auto_status_log(shift_id, status_val, ts)
+              VALUES(%s, %s, NOW())
+            """, (sid, prev))
             conn.commit()
+            print("[INFO] Inserted into auto_status_log and committed.")
 
-            # mark operator_sessions
+            print("[INFO] Marking operator sessions as logged out...")
             cur.execute("""
               UPDATE operator_sessions
-                 SET logout_ts=NOW()
-               WHERE shift_id=%s AND logout_ts IS NULL
-            """,(sid,))
+                 SET logout_ts = NOW()
+               WHERE shift_id = %s AND logout_ts IS NULL
+            """, (sid,))
             conn.commit()
+            print("[INFO] Operator sessions updated and committed.")
 
-            # send PLC write=0
             req_id = str(uuid.uuid4())
+            print(f"[INFO] Sending PLC write command to reset login bit (request_id={req_id})...")
             await producer.send_and_wait("plc_write_commands", {
-                "section":"login","tag_name":"login","value":0,"request_id":req_id
+                "section": "auto-logout",
+                "tag_name": "logout",
+                "value": 1,
+                "request_id": str(uuid.uuid4())
             })
 
-            # WS broadcast
-            await ws_mgr.broadcast({
-              "event":"auto-logout",
-              "shift": name,
-              "prev_status": prev,
-              "ts": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
-            })
+            print("[INFO] PLC write command sent.")
+
+            logout_event = {
+                "event": "auto-logout",
+                "shift": name,
+                "prev_status": prev,
+                "ts": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+            }
+            print(f"[INFO] Broadcasting WebSocket logout event: {logout_event}")
+            await ws_mgr.broadcast(logout_event)
+            print("[INFO] WebSocket broadcast done.")
 
         else:
-            await asyncio.sleep(300)  # no active shift
+            print("[INFO] No active shift. Sleeping for 5 minutes...")
+            await asyncio.sleep(300)
 
 # ─── startup ───────────────────────────────────────────────────
 @app.on_event("startup")
@@ -587,6 +669,7 @@ async def login(req: LoginReq):
       "value":      1,
       "request_id": request_id
     })
+    print()
 
     # 7) broadcast WebSocket event
     await ws_mgr.broadcast({
