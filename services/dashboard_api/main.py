@@ -554,7 +554,24 @@ def get_cycles(
     IST = timezone("Asia/Kolkata")
     
     # Build WHERE clauses
+    # Build WHERE clauses
     clauses, params = [], []
+    if operator:
+        clauses.append("cm.operator=%s"); params.append(operator)
+    if shift_id is not None:
+        clauses.append("cm.shift_id=%s"); params.append(shift_id)
+    if barcode:
+        clauses.append("cm.barcode=%s"); params.append(barcode)
+    if variant:
+        clauses.append("cm.variant=%s"); params.append(variant)
+    if from_ts:
+        from_ts_ist = from_ts.astimezone(IST)
+        clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
+    if to_ts:
+        to_ts_ist = to_ts.astimezone(IST)
+        clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
+    
+    # Add explicit type casting for cycle_id comparison
     if operator:
         clauses.append("cm.operator=%s"); params.append(operator)
     if shift_id is not None:
@@ -576,6 +593,7 @@ def get_cycles(
     
     if include_analytics:
         analytics_select = ", COALESCE(jsonb_agg(ca.json_data) FILTER (WHERE ca.id IS NOT NULL), '[]'::jsonb) as analytics"
+        analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = CAST(cm.cycle_id AS TEXT)"
         analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = CAST(cm.cycle_id AS TEXT)"
     
     # Your SQL query with additions for analytics
