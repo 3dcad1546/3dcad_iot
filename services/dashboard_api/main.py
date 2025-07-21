@@ -459,7 +459,7 @@ def get_alarms():
     Returns all alarms from the alarms table.
     """
     try:
-        cur.execute("SELECT * FROM alarms ORDER BY alarm_date DESC, alarm_time DESC LIMIT 100;")
+        cur.execute("SELECT * FROM alarm_master ORDER BY alarm_date DESC, alarm_time DESC LIMIT 100;")
         alarms = cur.fetchall()
         return alarms
     except Exception as e:
