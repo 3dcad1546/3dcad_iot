@@ -450,6 +450,21 @@ def delete_variant(variant_id: int, user: str = Depends(require_login)):
         raise HTTPException(404, "Variant not found")
     return
 
+
+# alarm api
+
+@app.get("api/alarms", response_model=List[dict])
+def get_alarms():
+    """
+    Returns all alarms from the alarms table.
+    """
+    try:
+        cur.execute("SELECT * FROM alarms ORDER BY alarm_date DESC, alarm_time DESC LIMIT 100;")
+        alarms = cur.fetchall()
+        return alarms
+    except Exception as e:
+        return {"error": str(e)}
+
 #receive webhook data
 @app.post("/edge/api/v1/analytics")
 async def receive_analytics(data: Dict):

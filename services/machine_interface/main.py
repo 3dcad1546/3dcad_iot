@@ -77,6 +77,20 @@ STATUS_BITS = [
     "MESUpload", "UnloadStation"
 ]
 
+# ─── PostgreSQL Setup ──────────────────────────────────────────────
+DB_URL = os.getenv("DB_URL")
+for _ in range(10):
+    try:
+        conn = psycopg2.connect(DB_URL)
+        break
+    except psycopg2.OperationalError:
+        logging.error("PostgreSQL not ready, retrying in 5s…")
+        time.sleep(5)
+else:
+    raise RuntimeError("PostgreSQL not available")
+conn.autocommit = True
+cur = conn.cursor(cursor_factory=RealDictCursor)
+
 # ─── Global AIOKafkaProducer Instance ──────────────────────────────────
 aio_producer: AIOKafkaProducer = None
 
@@ -563,6 +577,24 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
         await asyncio.sleep(1)
 
+
+# added for alarm inserting
+
+def insert_alarm_if_active(cur, alarm_date, alarm_time, tag):
+    # Optional: prevent inserting same alarm within 1 minute
+    cur.execute("""
+        SELECT 1 FROM alarm_master 
+        WHERE alarm_code = %s 
+        AND alarm_date = %s 
+        AND alarm_time >= (now() - interval '1 minute')
+    """, (tag, alarm_date))
+    
+    if cur.fetchone() is None:
+        cur.execute("""
+            INSERT INTO alarm_master (alarm_date, alarm_time, alarm_code, message)
+            VALUES (%s, %s, %s, %s)
+        """, (alarm_date, alarm_time, tag, f"Alarm triggered at {tag}"))
+
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=5):
     """
     Periodically reads tags from each configured section and publishes them
@@ -595,6 +627,20 @@ async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interv
                     section_data["ts"] = now
                     await aio_producer.send(topic, value=section_data)
                     print(f"[{now}] Sent '{section}' tags to Kafka topic '{topic}'.")
+
+                    if section == "alarm":
+                            alarm_time = now.split("T")[1]
+                            alarm_date = now.split("T")[0]
+
+                            for tag, is_active in section_data.items():
+                                if tag == "ts" or not is_active:
+                                    continue  # Skip non-alarms
+
+                                # Use executor to run sync DB insert
+                                await asyncio.get_event_loop().run_in_executor(
+                                    None, insert_alarm_if_active, cur, alarm_date, alarm_time, tag
+                                )
+
                 else:
                     pass # Or print a message if no data or producer not ready
 

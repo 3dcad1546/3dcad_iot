@@ -198,3 +198,12 @@ CREATE TABLE IF NOT EXISTS cycle_analytics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cycle_analytics_cycle_id ON cycle_analytics(cycle_id);
+
+-- alarm master table
+CREATE TABLE IF NOT EXISTS alarm_master (
+    id SERIAL PRIMARY KEY,
+    alarm_date DATE NOT NULL,
+    alarm_time TIME NOT NULL,
+    alarm_code VARCHAR(10) NOT NULL,
+    message TEXT NOT NULL
+);
