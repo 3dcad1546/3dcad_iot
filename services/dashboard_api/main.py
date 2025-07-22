@@ -173,12 +173,13 @@ CREATE TABLE IF NOT EXISTS alarm_master (
     alarm_time TIME NOT NULL,
     alarm_code TEXT NOT NULL,
     message TEXT,
-    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'acknowledged', 'resolved')),
+    status TEXT DEFAULT 'active',
     acknowledged BOOLEAN DEFAULT FALSE,
     acknowledged_by TEXT,
     acknowledged_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
-    resolved_at TIMESTAMP
+    resolved_at TIMESTAMP,
+    CONSTRAINT check_alarm_status CHECK (status IN ('active', 'acknowledged', 'resolved'))       
 );
 """)
 
