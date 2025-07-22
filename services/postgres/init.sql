@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS users (
   username     TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   role         user_role NOT NULL
-)
+);
 
 INSERT INTO users (username, password_hash, role) VALUES
   ('admin1', '$2b$12$KIX/OKIXlh1pGi1H/abc00abc1234567890abcdefghiJklmnopqr', 'admin'),

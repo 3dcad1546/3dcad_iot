@@ -122,7 +122,7 @@
             "G1CONTROLL_STATUS": { "address": 1181, "type": "holding" },
             "G1PROGRAM_STATUS": { "address": 1182, "type": "holding" },
             "G1ACTUAL_SPEED": { "address": 1183, "type": "holding" },
-
+            "MANUALHOME":{ "address": 940,"type": "coil" },
              "G1YMODE": { "address": 1260, "type": "holding" },
             "G1YCONTROLL_STATUS": { "address": 1261, "type": "holding" },
             "G1YPROGRAM_STATUS": { "address": 1262, "type": "holding" },
@@ -192,7 +192,7 @@
             "G2XSTART": [1330, 5],
             "G2XSTOP": [1330, 6],
             "G2XERRORACKNOWLEDGE": [1330, 7],
-
+            "MANUALHOME":940,
             "LD_JOGFORWORD": [
                 1130,
                 3
