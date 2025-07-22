@@ -199,11 +199,26 @@ CREATE TABLE IF NOT EXISTS cycle_analytics (
 
 CREATE INDEX IF NOT EXISTS idx_cycle_analytics_cycle_id ON cycle_analytics(cycle_id);
 
--- alarm master table
+--16) Alarm master table 
 CREATE TABLE IF NOT EXISTS alarm_master (
     id SERIAL PRIMARY KEY,
     alarm_date DATE NOT NULL,
     alarm_time TIME NOT NULL,
-    alarm_code VARCHAR(10) NOT NULL,
-    message TEXT NOT NULL
+    alarm_code TEXT NOT NULL,
+    message TEXT,
+    status TEXT DEFAULT 'active',
+    acknowledged BOOLEAN DEFAULT FALSE,
+    acknowledged_by TEXT,
+    acknowledged_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    resolved_at TIMESTAMP,
+    CONSTRAINT check_alarm_status CHECK (status IN ('active', 'acknowledged', 'resolved'))
 );
+
+-- Add indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_alarm_master_date_time 
+ON alarm_master(alarm_date DESC, alarm_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_alarm_master_status 
+ON alarm_master(status);
+

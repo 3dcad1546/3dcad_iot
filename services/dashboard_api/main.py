@@ -165,38 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_cycle_master_variant
   ON cycle_master(variant);
 """)
 
-# ─── Alarm Management Tables ──────────────────────────────────────
-cur.execute("""
-CREATE TABLE IF NOT EXISTS alarm_master (
-    id SERIAL PRIMARY KEY,
-    alarm_date DATE NOT NULL,
-    alarm_time TIME NOT NULL,
-    alarm_code TEXT NOT NULL,
-    message TEXT,
-    status TEXT DEFAULT 'active',
-    acknowledged BOOLEAN DEFAULT FALSE,
-    acknowledged_by TEXT,
-    acknowledged_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW(),
-    resolved_at TIMESTAMP,
-    CONSTRAINT check_alarm_status CHECK (status IN ('active', 'acknowledged', 'resolved'))       
-);
-""")
 
-cur.execute("""
-CREATE INDEX IF NOT EXISTS idx_alarm_master_date_time 
-ON alarm_master(alarm_date DESC, alarm_time DESC);
-""")
-
-cur.execute("""
-CREATE INDEX IF NOT EXISTS idx_alarm_master_status 
-ON alarm_master(status);
-""")
-
-cur.execute("""
-CREATE INDEX IF NOT EXISTS idx_alarm_master_code 
-ON alarm_master(alarm_code);
-""")
 
 # ─── InfluxDB Setup ────────────────────────────────────────────────
 influx_client = InfluxDBClient(
