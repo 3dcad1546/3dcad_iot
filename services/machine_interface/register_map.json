@@ -126,7 +126,19 @@
              "G1YMODE": { "address": 1260, "type": "holding" },
             "G1YCONTROLL_STATUS": { "address": 1261, "type": "holding" },
             "G1YPROGRAM_STATUS": { "address": 1262, "type": "holding" },
-            "G1YACTUAL_SPEED": { "address": 1263, "type": "holding" }
+            "G1YACTUAL_SPEED": { "address": 1263, "type": "holding" },
+            "G2MODE": { "address": 1220, "type": "holding" },
+            "G2CONTROLL_STATUS": { "address": 1221, "type": "holding" },
+            "G2PROGRAM_STATUS": { "address": 1222, "type": "holding" },
+            "G2ACTUAL_SPEED": { "address": 1223, "type": "holding" },
+            "G2YMODE": { "address": 1340, "type": "holding" },
+            "G2YCONTROLL_STATUS": { "address": 1341, "type": "holding" },
+            "G2YPROGRAM_STATUS": { "address": 1342, "type": "holding" },
+            "G2YACTUAL_SPEED": { "address": 1343, "type": "holding" },
+            "G2XMODE": { "address": 1300, "type": "holding" },
+            "G2XCONTROLL_STATUS": { "address": 1301, "type": "holding" },
+            "G2XPROGRAM_STATUS": { "address": 1302, "type": "holding" },
+            "G2XACTUAL_SPEED": { "address": 1303, "type": "holding" }
         },
         "write": {
 
@@ -144,7 +156,9 @@
             "G1STOP": [1210, 6],
             "G1ERRORACKNOWLEDGE": [1210, 7],
             "G1SELECTPROGRAMNUMBER":1187,
-
+            "G2SELECTPROGRAMNUMBER":1227,
+            "G2YSELECTPROGRAMNUMBER":1347,
+            "G2XSELECTPROGRAMNUMBER":1307,
             "G1YREFERENCE": [1290, 1],
             "G1YOPENABLE": [1290, 2],
             "G1YJOGFORWORD": [1290, 3],
@@ -153,6 +167,30 @@
             "G1YSTOP": [1290, 6],
             "G1YERRORACKNOWLEDGE": [1290, 7],
             "G1YSELECTPROGRAMNUMBER":1267,
+
+            "G2REFERENCE": [1250, 1],
+            "G2OPENABLE": [1250, 2],
+            "G2JOGFORWORD": [1250, 3],
+            "G2JOGREVERSE": [1250, 4],
+            "G2START": [1250, 5],
+            "G2STOP": [1250, 6],
+            "G2ERRORACKNOWLEDGE": [1250, 7],
+
+            "G2YREFERENCE": [1370, 1],
+            "G2YOPENABLE": [1370, 2],
+            "G2YJOGFORWORD": [1370, 3],
+            "G2YJOGREVERSE": [1370, 4],
+            "G2YSTART": [1370, 5],
+            "G2YSTOP": [1370, 6],
+            "G2YERRORACKNOWLEDGE": [1370, 7],
+
+            "G2XREFERENCE": [1330, 1],
+            "G2XOPENABLE": [1330, 2],
+            "G2XJOGFORWORD": [1330, 3],
+            "G2XJOGREVERSE": [1330, 4],
+            "G2XSTART": [1330, 5],
+            "G2XSTOP": [1330, 6],
+            "G2XERRORACKNOWLEDGE": [1330, 7],
 
             "LD_JOGFORWORD": [
                 1130,
