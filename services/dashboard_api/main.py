@@ -1,4 +1,4 @@
-import os,json,time,threading,select,asyncio,requests,psycopg2,psycopg2.extensions,uuid,logging,traceback
+import os,json,time,threading,select,asyncio,requests,psycopg2,psycopg2.extensions,uuid,logging,traceback,random 
 from logging.handlers import RotatingFileHandler
 from psycopg2.extras import RealDictCursor
 from psycopg2 import errors
@@ -16,7 +16,8 @@ from dateutil.parser import isoparse
 # Ensure log directory exists
 log_dir = "/services/dashboard_api/logs"
 os.makedirs(log_dir, exist_ok=True)
-
+# Global Kafka producer
+kafka_producer: AIOKafkaProducer = None
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -102,6 +103,50 @@ def get_cfg(key: str, default=None):
 # ─── Kafka Bootstrap Setting ──────────────────────────────────────
 KAFKA_BOOTSTRAP = get_cfg("KAFKA_BROKER", "kafka:9092")
 
+# WebSocket Topics (remove machine-status from here since it's handled separately)
+WS_TOPICS = {
+    "startup-status": STARTUP_STATUS,
+    "manual-status":  MANUAL_STATUS,
+    "auto-status":    AUTO_STATUS,
+    "robo-status":    ROBO_STATUS,
+    "io-status":      IO_STATUS,
+    "alarm-status":   ALARM_STATUS,
+    "oee-status":     OEE_STATUS,
+}
+
+# WebSocket Connection Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active: Dict[str, set] = {}
+
+    async def connect(self, stream: str, websocket: WebSocket):
+        await websocket.accept()
+        if stream not in self.active:
+            self.active[stream] = set()
+        self.active[stream].add(websocket)
+        logger.info(f"WebSocket connected to stream: {stream}")
+
+    def disconnect(self, stream: str, websocket: WebSocket):
+        if stream in self.active:
+            self.active[stream].discard(websocket)
+            logger.info(f"WebSocket disconnected from stream: {stream}")
+
+    async def broadcast(self, stream: str, message: str):
+        if stream in self.active:
+            dead_connections = []
+            for connection in self.active[stream]:
+                try:
+                    await connection.send_text(message)
+                except Exception as e:
+                    logger.debug(f"Failed to send to WebSocket in {stream}: {e}")
+                    dead_connections.append(connection)
+            
+            # Clean up dead connections
+            for connection in dead_connections:
+                self.active[stream].discard(connection)
+
+mgr = ConnectionManager()
+
 # ─── variant_master  ───────────────────────────────────
 cur.execute("""
 CREATE TABLE IF NOT EXISTS variant_master (
@@ -120,6 +165,37 @@ CREATE INDEX IF NOT EXISTS idx_cycle_master_variant
   ON cycle_master(variant);
 """)
 
+# ─── Alarm Management Tables ──────────────────────────────────────
+cur.execute("""
+CREATE TABLE IF NOT EXISTS alarm_master (
+    id SERIAL PRIMARY KEY,
+    alarm_date DATE NOT NULL,
+    alarm_time TIME NOT NULL,
+    alarm_code TEXT NOT NULL,
+    message TEXT,
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'acknowledged', 'resolved')),
+    acknowledged BOOLEAN DEFAULT FALSE,
+    acknowledged_by TEXT,
+    acknowledged_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    resolved_at TIMESTAMP
+);
+""")
+
+cur.execute("""
+CREATE INDEX IF NOT EXISTS idx_alarm_master_date_time 
+ON alarm_master(alarm_date DESC, alarm_time DESC);
+""")
+
+cur.execute("""
+CREATE INDEX IF NOT EXISTS idx_alarm_master_status 
+ON alarm_master(status);
+""")
+
+cur.execute("""
+CREATE INDEX IF NOT EXISTS idx_alarm_master_code 
+ON alarm_master(alarm_code);
+""")
 
 # ─── InfluxDB Setup ────────────────────────────────────────────────
 influx_client = InfluxDBClient(
@@ -454,662 +530,278 @@ def delete_variant(variant_id: int, user: str = Depends(require_login)):
 # alarm api
 
 @app.get("/api/alarms", response_model=List[dict])
-def get_alarms():
+def get_alarms(
+    status: Optional[str] = Query(None, description="Filter by status: active, acknowledged, resolved"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of alarms to return"),
+    user: str = Depends(require_login)
+):
     """
-    Returns all alarms from the alarms table.
+    Returns alarms from the alarm_master table with optional filtering
     """
     try:
-        cur.execute("SELECT * FROM alarm_master ORDER BY alarm_date DESC, alarm_time DESC LIMIT 100;")
+        where_clause = ""
+        params = []
+        
+        if status:
+            where_clause = "WHERE status = %s"
+            params.append(status)
+        
+        query = f"""
+            SELECT 
+                id, alarm_date, alarm_time, alarm_code, message, status,
+                acknowledged, acknowledged_by, acknowledged_at, created_at, resolved_at,
+                EXTRACT(EPOCH FROM (acknowledged_at - created_at)) as ack_duration_seconds,
+                EXTRACT(EPOCH FROM (COALESCE(resolved_at, NOW()) - created_at)) as total_duration_seconds
+            FROM alarm_master 
+            {where_clause}
+            ORDER BY alarm_date DESC, alarm_time DESC 
+            LIMIT %s
+        """
+        params.append(limit)
+        
+        cur.execute(query, params)
         alarms = cur.fetchall()
-        return alarms
-    except Exception as e:
-        return {"error": str(e)}
-
-#receive webhook data
-@app.post("/edge/api/v1/analytics")
-async def receive_analytics(data: Dict):
-    logger.info(f"Received analytics webhook with keys: {list(data.keys())}")
-    
-    # Try multiple possible field names for barcode
-    barcode = None
-    for field in ["barcode", "part_id", "metadata", "serial"]:
-        if field in data and data[field]:
-            barcode = data[field]
-            logger.info(f"Found barcode identifier in field '{field}': {barcode}")
-            break
-    
-    if not barcode:
-        logger.warning(f"Analytics data received without any identifiable barcode fields: {data.keys()}")
-        return {"status": "warning", "message": "No barcode found in data"}
-    
-    # Find the corresponding cycle_id for this barcode
-    try:
-        cur.execute("SELECT cycle_id FROM cycle_master WHERE barcode = %s ORDER BY start_ts DESC LIMIT 1", 
-                   (barcode,))
-        row = cur.fetchone()
         
-        if not row:
-            logger.warning(f"No cycle found for barcode {barcode} in analytics data")
-            return {"status": "warning", "message": f"No cycle found for barcode {barcode}"}
+        # Convert to list of dicts with proper datetime formatting
+        result = []
+        for alarm in alarms:
+            alarm_dict = dict(alarm)
+            # Format timestamps to ISO format if they exist
+            for ts_field in ['acknowledged_at', 'created_at', 'resolved_at']:
+                if alarm_dict.get(ts_field):
+                    alarm_dict[ts_field] = alarm_dict[ts_field].isoformat()
+            result.append(alarm_dict)
         
-        cycle_id = row["cycle_id"]
-        
-        logger.info(f"Found cycle_id {cycle_id} for barcode {barcode}")
-
-        
-        
-        # Store the analytics data
-        cur.execute(
-            "INSERT INTO cycle_analytics(cycle_id, json_data) VALUES(%s, %s) RETURNING id",
-            (cycle_id, json.dumps(data))
-        )
-        analytics_id = cur.fetchone()["id"]
-        conn.commit()
-
-         # After successful storage, broadcast to WebSocket
-        await mgr.broadcast("analytics", json.dumps({
-            "cycle_id": cycle_id,
-            "barcode": barcode,
-            "analytics_id": analytics_id,
-            "analytics": data
-        }))
-        
-       
-        
-        logger.info(f"Successfully stored analytics data with ID {analytics_id} for cycle {cycle_id}")
-        return {"status": "success", "cycle_id": cycle_id, "analytics_id": analytics_id}
+        return result
         
     except Exception as e:
-        logger.error(f"Error storing analytics data: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        conn.rollback()
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Error fetching alarms: {e}")
+        raise HTTPException(500, f"Failed to fetch alarms: {str(e)}")
 
-# ─── Cycle Reporting Endpoint ──────────────────────────────────────
-class CycleVariantUpdate(BaseModel):
-    variant_id: int
-
-@app.put("/api/cycles/{cycle_id}/variant", response_model=Dict[str,str])
-def assign_cycle_variant(
-    cycle_id: str,
-    upd: CycleVariantUpdate,
-    user: str = Depends(require_login)
-):
-    # 1) look up the variant name
-    cur.execute("SELECT name FROM variant_master WHERE id=%s", (upd.variant_id,))
-    vr = cur.fetchone()
-    if not vr:
-        raise HTTPException(404, "Variant not found")
-    name = vr["name"]
-
-    # 2) update the cycle
-    cur.execute(
-        "UPDATE cycle_master SET variant=%s WHERE cycle_id=%s",
-        (name, cycle_id)
-    )
-    if cur.rowcount == 0:
-        raise HTTPException(404, "Cycle not found")
-
-    return {"cycle_id": cycle_id, "variant": name}
-
-# og report changes working condition with analytics
-# @app.get("/api/cycles", response_model=List[CycleReportItem])
-# def get_cycles(
-#     operator: Optional[str] = None,
-#     shift_id: Optional[int] = None,
-#     barcode: Optional[str] = None,
-#     variant: Optional[str] = None,
-#     from_ts: Optional[datetime] = Query(None, alias="from"),
-#     to_ts: Optional[datetime] = Query(None, alias="to"),
-#     include_analytics: bool = Query(False),
-#     limit: int = Query(60, ge=1, le=100),
-#     user: str = Depends(require_login)
-# ):
-#     IST = timezone("Asia/Kolkata")
-    
-#     # Build WHERE clauses
-#     # Build WHERE clauses
-#     clauses, params = [], []
-#     if operator:
-#         clauses.append("cm.operator=%s"); params.append(operator)
-#     if shift_id is not None:
-#         clauses.append("cm.shift_id=%s"); params.append(shift_id)
-#     if barcode:
-#         clauses.append("cm.barcode=%s"); params.append(barcode)
-#     if variant:
-#         clauses.append("cm.variant=%s"); params.append(variant)
-#     if from_ts:
-#         from_ts_ist = from_ts.astimezone(IST)
-#         clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
-#     if to_ts:
-#         to_ts_ist = to_ts.astimezone(IST)
-#         clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
-    
-#     # Add explicit type casting for cycle_id comparison
-#     if operator:
-#         clauses.append("cm.operator=%s"); params.append(operator)
-#     if shift_id is not None:
-#         clauses.append("cm.shift_id=%s"); params.append(shift_id)
-#     if barcode:
-#         clauses.append("cm.barcode=%s"); params.append(barcode)
-#     if variant:
-#         clauses.append("cm.variant=%s"); params.append(variant)
-#     if from_ts:
-#         from_ts_ist = from_ts.astimezone(IST)
-#         clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
-#     if to_ts:
-#         to_ts_ist = to_ts.astimezone(IST)
-#         clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
-    
-#     # Add explicit type casting for cycle_id comparison
-#     analytics_select = ""
-#     analytics_join = ""
-    
-#     if include_analytics:
-#         analytics_select = ", COALESCE(jsonb_agg(ca.json_data) FILTER (WHERE ca.id IS NOT NULL), '[]'::jsonb) as analytics"
-#         analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = CAST(cm.cycle_id AS TEXT)"
-        
-    
-#     # Your SQL query with additions for analytics
-#     sql = f"""
-#     SELECT 
-#       cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
-#       cm.start_ts, cm.end_ts,
-#       jsonb_agg(jsonb_build_object('stage', ce.stage, 'ts', ce.ts)
-#                 ORDER BY ce.id) AS events
-#       {analytics_select}
-#     FROM cycle_master cm
-#     LEFT JOIN cycle_event ce ON ce.cycle_id = cm.cycle_id
-#     {analytics_join}
-#     WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
-#     GROUP BY cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode, cm.start_ts, cm.end_ts
-#     ORDER BY cm.start_ts DESC
-#     LIMIT %s
-#     """
-#     params.append(limit)
-    
-#     cur.execute(sql, params)
-#     rows = cur.fetchall()
-    
-#     # Update your result processing to include analytics
-#     result = []
-#     for r in rows:
-#         item = {
-#             "cycle_id": r["cycle_id"],
-#             "operator": r["operator"],
-#             "shift_id": r["shift_id"],
-#             "variant": r["variant"] or "",
-#             "barcode": r["barcode"],
-#             "start_ts": r["start_ts"].astimezone(IST),
-#             "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
-#             "events": [{"stage": e["stage"], "ts": e["ts"]} for e in (r["events"] or [])]
-
-#         }
-        
-#         # Add analytics if included
-#         if include_analytics and "analytics" in r and r["analytics"]:
-#             item["analytics"] = r["analytics"]
-        
-#         result.append(CycleReportItem(**item))
-    
-#     return result
-
-
-# this function added to include cycle_id in vision json_data also
-@app.get("/api/cycles", response_model=List[CycleReportItem])
-def get_cycles(
-    operator: Optional[str] = None,
-    shift_id: Optional[int] = None,
-    barcode: Optional[str] = None,
-    variant: Optional[str] = None,
-    from_ts: Optional[datetime] = Query(None, alias="from"),
-    to_ts: Optional[datetime] = Query(None, alias="to"),
-    include_analytics: bool = Query(False),
-    limit: int = Query(60, ge=1, le=100),
-    user: str = Depends(require_login)
-):
-    IST = timezone("Asia/Kolkata")
-
-    clauses, params = [], []
-    if operator:
-        clauses.append("cm.operator=%s"); params.append(operator)
-    if shift_id is not None:
-        clauses.append("cm.shift_id=%s"); params.append(shift_id)
-    if barcode:
-        clauses.append("cm.barcode=%s"); params.append(barcode)
-    if variant:
-        clauses.append("cm.variant=%s"); params.append(variant)
-    if from_ts:
-        from_ts_ist = from_ts.astimezone(IST)
-        clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
-    if to_ts:
-        to_ts_ist = to_ts.astimezone(IST)
-        clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
-
-    # SQL parts
-    analytics_cte = ""
-    analytics_join = ""
-    analytics_select = ""
-
-    if include_analytics:
-        analytics_cte = """
-        WITH analytics_agg AS (
-            SELECT
-                ca.cycle_id,
-                jsonb_agg(ca.json_data) AS data
-            FROM cycle_analytics ca
-            GROUP BY ca.cycle_id
-        )
-        """
-        analytics_join = "LEFT JOIN analytics_agg aa ON aa.cycle_id = cm.cycle_id"
-        analytics_select = """,
-        jsonb_build_object(
-            'cycle_id', cm.cycle_id,
-            'data', COALESCE(aa.data, '[]'::jsonb)
-        ) AS analytics
-        """
-
-    # Final SQL query
-    sql = f"""
-    {analytics_cte}
-    SELECT 
-      cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
-      cm.start_ts, cm.end_ts,
-      jsonb_agg(jsonb_build_object('stage', ce.stage, 'ts', ce.ts)
-                ORDER BY ce.id) AS events
-      {analytics_select}
-    FROM cycle_master cm
-    LEFT JOIN cycle_event ce ON ce.cycle_id = cm.cycle_id
-    {analytics_join}
-    WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
-    GROUP BY cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode, cm.start_ts, cm.end_ts
-    {', aa.data' if include_analytics else ''}
-    ORDER BY cm.start_ts DESC
-    LIMIT %s
+# Add alarm acknowledgment endpoint
+@app.post("/api/alarms/{alarm_id}/acknowledge")
+def acknowledge_alarm(alarm_id: int, user: str = Depends(require_login)):
     """
-    params.append(limit)
-
-    cur.execute(sql, params)
-    rows = cur.fetchall()
-
-    # Build result
-    result = []
-    for r in rows:
-        item = {
-            "cycle_id": r["cycle_id"],
-            "operator": r["operator"],
-            "shift_id": r["shift_id"],
-            "variant": r["variant"] or "",
-            "barcode": r["barcode"],
-            "start_ts": r["start_ts"].astimezone(IST),
-            "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
-            "events": [{"stage": e["stage"], "ts": e["ts"]} for e in (r["events"] or [])]
+    Acknowledge an alarm
+    """
+    try:
+        cur.execute("""
+            UPDATE alarm_master 
+            SET acknowledged = TRUE, 
+                acknowledged_by = %s, 
+                acknowledged_at = NOW(),
+                status = 'acknowledged'
+            WHERE id = %s AND acknowledged = FALSE
+            RETURNING id, alarm_code, status
+        """, (user, alarm_id))
+        
+        result = cur.fetchone()
+        if not result:
+            raise HTTPException(404, "Alarm not found or already acknowledged")
+        
+        conn.commit()
+        logger.info(f"Alarm {alarm_id} acknowledged by {user}")
+        
+        return {
+            "message": f"Alarm {result['alarm_code']} acknowledged successfully",
+            "alarm_id": result["id"],
+            "status": result["status"]
         }
+        
+    except Exception as e:
+        logger.error(f"Error acknowledging alarm {alarm_id}: {e}")
+        conn.rollback()
+        raise HTTPException(500, f"Failed to acknowledge alarm: {str(e)}")
 
-        if include_analytics and r.get("analytics"):
-            # Wrap in array to match expected List[Dict] structure
-            item["analytics"] = [r["analytics"]]
+# Add alarm resolution endpoint
+@app.post("/api/alarms/{alarm_id}/resolve")
+def resolve_alarm(alarm_id: int, user: str = Depends(require_login)):
+    """
+    Mark an alarm as resolved
+    """
+    try:
+        cur.execute("""
+            UPDATE alarm_master 
+            SET status = 'resolved',
+                resolved_at = NOW()
+            WHERE id = %s AND status != 'resolved'
+            RETURNING id, alarm_code, status
+        """, (alarm_id,))
+        
+        result = cur.fetchone()
+        if not result:
+            raise HTTPException(404, "Alarm not found or already resolved")
+        
+        conn.commit()
+        logger.info(f"Alarm {alarm_id} resolved by {user}")
+        
+        return {
+            "message": f"Alarm {result['alarm_code']} resolved successfully",
+            "alarm_id": result["id"],
+            "status": result["status"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error resolving alarm {alarm_id}: {e}")
+        conn.rollback()
+        raise HTTPException(500, f"Failed to resolve alarm: {str(e)}")
 
-        result.append(CycleReportItem(**item))
+# Add this function to consume and process alarm data from Kafka
+async def consume_alarm_status_and_populate_db():
+    """
+    Consume alarm status from Kafka and insert active alarms into database
+    """
+    for i in range(10):
+        try:
+            consumer = AIOKafkaConsumer(
+                ALARM_STATUS,
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                auto_offset_reset="earliest",
+                value_deserializer=lambda b: json.loads(b.decode()),
+                group_id="alarm_db_processor"
+            )
+            await consumer.start()
+            logger.info("Started alarm status consumer for database processing")
+            break
+        except AIOKafkaNoBrokersAvailable:
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError("Cannot connect alarm status consumer")
 
-    return result
+    try:
+        async for msg in consumer:
+            payload = msg.value
+            alarm_data = payload
+            
+            if not alarm_data or not isinstance(alarm_data, dict):
+                continue
+                
+            # Extract timestamp
+            timestamp_str = alarm_data.get("ts", "")
+            if timestamp_str:
+                try:
+                    # Parse timestamp to get date and time
+                    dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    alarm_date = dt.date()
+                    alarm_time = dt.time()
+                except:
+                    # Fallback to current time
+                    now = datetime.now()
+                    alarm_date = now.date()
+                    alarm_time = now.time()
+            else:
+                now = datetime.now()
+                alarm_date = now.date()
+                alarm_time = now.time()
+            
+            # Process each alarm in the payload
+            for alarm_code, is_active in alarm_data.items():
+                if alarm_code == "ts":  # Skip timestamp field
+                    continue
+                    
+                try:
+                    if is_active and is_active != 0:  # Alarm is active
+                        # Check if this alarm is already active today
+                        cur.execute("""
+                            SELECT id FROM alarm_master 
+                            WHERE alarm_code = %s 
+                            AND alarm_date = %s 
+                            AND status = 'active'
+                        """, (alarm_code, alarm_date))
+                        
+                        existing_alarm = cur.fetchone()
+                        
+                        if not existing_alarm:
+                            # Insert new active alarm
+                            cur.execute("""
+                                INSERT INTO alarm_master (
+                                    alarm_date, alarm_time, alarm_code, 
+                                    message, status, created_at
+                                )
+                                VALUES (%s, %s, %s, %s, 'active', NOW())
+                            """, (
+                                alarm_date, 
+                                alarm_time, 
+                                alarm_code,
+                                f"Alarm triggered: {alarm_code}"
+                            ))
+                            
+                            logger.info(f"New alarm inserted: {alarm_code} at {alarm_date} {alarm_time}")
+                            
+                    else:  # Alarm is not active - auto-resolve if it was active
+                        cur.execute("""
+                            UPDATE alarm_master 
+                            SET status = 'resolved', resolved_at = NOW()
+                            WHERE alarm_code = %s 
+                            AND alarm_date = %s 
+                            AND status = 'active'
+                        """, (alarm_code, alarm_date))
+                        
+                        if cur.rowcount > 0:
+                            logger.info(f"Auto-resolved alarm: {alarm_code}")
+                            
+                except Exception as e:
+                    logger.error(f"Error processing alarm {alarm_code}: {e}")
+                    continue
+                    
+            conn.commit()
+            
+    except Exception as e:
+        logger.error(f"Error in alarm status consumer: {e}")
+    finally:
+        await consumer.stop()
+        logger.info("Stopped alarm status consumer")
 
-
-# ─── WebSocket Manager ────────────────────────────────────────────
-WS_TOPICS = {
-    #"machine-status": MACHINE_STATUS_TOPIC,
-    "startup-status": STARTUP_STATUS,
-    "manual-status":  MANUAL_STATUS,
-    "auto-status":    AUTO_STATUS,
-    "robo-status":    ROBO_STATUS,
-    "io-status":      IO_STATUS,
-    "alarm-status":   ALARM_STATUS,
-    "oee-status":     OEE_STATUS,
-    "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
-    "analytics": "other_streams_if_any",
-    
-}
-
-class ConnectionManager:
-    def __init__(self):
-        self.active: Dict[str, set[WebSocket]] = {s:set() for s in WS_TOPICS}
-        self.pending: Dict[str, WebSocket]   = {}
-
-    async def connect(self, stream: str, ws: WebSocket):
-        await ws.accept()
-        self.active.setdefault(stream,set()).add(ws)
-
-    def disconnect(self, stream: str, ws: WebSocket):
-        self.active.get(stream,set()).discard(ws)
-
-    async def broadcast(self, stream: str, msg: str):
-        conns = self.active.get(stream, set())
-        dead = []
-        for ws in conns:
-            try:
-                await ws.send_text(msg)
-            except:
-                dead.append(ws)
-        for ws in dead:
-            conns.remove(ws)
-
-    async def send_write_response(self, request_id: str, payload: dict):
-        ws = self.pending.pop(request_id, None)
-        if ws:
-            try:
-                await ws.send_json({"type":"plc_write_response","data":payload})
-            except:
-                pass
-
-mgr = ConnectionManager()
-
-# ─── Kafka→WebSocket ──────────────────────────────────────────────
-async def kafka_to_ws(name: str, topic: str):
+async def kafka_to_ws(stream: str, topic: str):
+    """
+    Generic Kafka to WebSocket streaming function
+    """
     for i in range(10):
         try:
             consumer = AIOKafkaConsumer(
                 topic,
                 bootstrap_servers=KAFKA_BOOTSTRAP,
                 auto_offset_reset="latest",
-                value_deserializer=lambda b: b.decode()
+                value_deserializer=lambda b: b.decode(),
+                group_id=f"{stream}_websocket_group"
             )
             await consumer.start()
+            logger.info(f"Started {stream} WebSocket streaming consumer")
             break
         except AIOKafkaNoBrokersAvailable:
             await asyncio.sleep(5)
     else:
-        raise RuntimeError(f"Cannot connect consumer to {topic}")
+        raise RuntimeError(f"Cannot connect {stream} WebSocket consumer")
 
     try:
         async for msg in consumer:
-            await mgr.broadcast(name, msg.value)
+            await mgr.broadcast(stream, msg.value)
+    except Exception as e:
+        logger.error(f"Error in {stream} WebSocket consumer: {e}")
     finally:
         await consumer.stop()
-
-# ─── Kafka Producer for WebSocket PLC writes ───────────────────────
-kafka_producer: Optional[AIOKafkaProducer] = None
+        logger.info(f"Stopped {stream} WebSocket consumer")
 
 async def init_kafka_producer():
+    """
+    Initialize the Kafka producer
+    """
     global kafka_producer
     for i in range(10):
         try:
-            p = AIOKafkaProducer(
+            kafka_producer = AIOKafkaProducer(
                 bootstrap_servers=KAFKA_BOOTSTRAP,
                 value_serializer=lambda v: json.dumps(v).encode()
             )
-            await p.start()
-            kafka_producer = p
-            return
-        except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
-    raise RuntimeError("Cannot start Kafka producer")
-
-# ─── Listen for PLC write responses ────────────────────────────────
-async def listen_for_plc_write_responses():
-    for i in range(10):
-        try:
-            consumer = AIOKafkaConsumer(
-                PLC_WRITE_RESPONSES_TOPIC,
-                bootstrap_servers=KAFKA_BOOTSTRAP,
-                auto_offset_reset="latest",
-                value_deserializer=lambda b: json.loads(b.decode())
-            )
-            await consumer.start()
+            await kafka_producer.start()
+            logger.info("Kafka producer initialized")
             break
         except AIOKafkaNoBrokersAvailable:
             await asyncio.sleep(5)
     else:
-        raise RuntimeError("Cannot start response consumer")
-
-    try:
-        async for msg in consumer:
-            payload = msg.value
-            request_id = payload.get("request_id")
-            if request_id:
-                await mgr.send_write_response(request_id, payload)
-    finally:
-        await consumer.stop()
-
-# ─── WebSocket Endpoints ──────────────────────────────────────────
-@app.websocket("/ws/plc-write")
-async def ws_plc_write(ws: WebSocket, operator: str = Depends(websocket_auth)):
-    await mgr.connect("plc-write-responses", ws)
-    try:
-        while True:
-            data = await ws.receive_json()
-            cmd = PlcWriteCommand(**data)
-            rid = cmd.request_id or str(uuid.uuid4())
-            cmd.request_id = rid
-            mgr.pending[rid] = ws
-            if not kafka_producer:
-                raise RuntimeError("Kafka producer not initialized")
-            await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, cmd.dict())
-            await ws.send_json({"type":"ack","status":"pending","request_id":rid})
-    except WebSocketDisconnect:
-        mgr.disconnect("plc-write-responses", ws)
-
-@app.websocket("/ws/{stream}")
-async def ws_stream(stream: str, ws: WebSocket, operator: str = Depends(websocket_auth)):
-    if stream not in WS_TOPICS:
-        await ws.close(code=1008, reason="Unknown stream")
-        return
-    await mgr.connect(stream, ws)
-    try:
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        mgr.disconnect(stream, ws)
-
-# websocket for realtime vision data
-@app.websocket("/ws/analytics")
-async def websocket_analytics(
-    ws: WebSocket,
-    operator: str = Depends(websocket_auth)
-):
-    # Define the stream name
-    stream = "analytics"  # Add this line to define the stream variable
-    
-    await mgr.connect(stream, ws)
-    try:
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        mgr.disconnect(stream, ws)
-
-@app.websocket("/ws/machine-status")
-async def websocket_machine_status(
-    ws: WebSocket,
-    operator: str = Depends(websocket_auth)
-):
-    """
-    Dedicated WebSocket endpoint for machine status data
-    """
-    stream = "machine-status"
-    
-    # Add machine-status to active connections manually
-    if stream not in mgr.active:
-        mgr.active[stream] = set()
-    
-    await mgr.connect(stream, ws)
-    try:
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        mgr.disconnect(stream, ws)
+        raise RuntimeError("Cannot connect Kafka producer")
 
 
-async def consume_machine_status_and_populate_db():
-    # 1) Create consumer
-    consumer = AIOKafkaConsumer(
-        MACHINE_STATUS_TOPIC,
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        auto_offset_reset="earliest",
-        value_deserializer=lambda b: json.loads(b.decode())
-    )
-    await consumer.start()
-    
-    logging.debug(f"Started consuming machine_status for cycle processing")
-
-    try:
-        async for msg in consumer:
-            payload = msg.value
-            logging.debug(f"Received message: {json.dumps(payload, indent=2)}")
-            ts      = payload["ts"]
-            sets    = payload.get("sets", [])
-            logging.debug(f"Processing {len(sets)} sets from machine_status")
-
-            for s in sets:
-                # Get the original set_id for tracking, but create a proper UUID for the database
-                original_set_id = s["set_id"]
-                
-                # Remove null bytes and + with any digits after it from original_set_id
-                # if original_set_id:
-                #     original_set_id = original_set_id.replace("\x00", "")
-                    # Remove + and any digits after it
-                    # if "+" in original_set_id:
-                    #     original_set_id = original_set_id.split("+")[0]
-                
-                logger.debug(f"{original_set_id} - Original set_id")               # e.g. "BC1|BC2"
-                if not original_set_id or original_set_id == "|":
-                    logging.debug(f"Skipping invalid cycle_id: '{original_set_id}'")
-                    continue
-                    
-                # Generate a deterministic UUID based on the set_id
-                # This ensures we get the same UUID each time for the same set_id
-                cycle_id = str(uuid.uuid5(uuid.NAMESPACE_OID, original_set_id))
-                logging.debug(f"Converted set_id '{original_set_id}' to UUID: {cycle_id}")
-                    
-                bc1, bc2 = s["barcodes"]
-                barcode = next((b for b in [bc1, bc2] if b), "UNKNOWN")
-                # Remove null bytes and + with any digits after it from barcode
-                if barcode:
-                    barcode = barcode
-                    barcode = barcode.replace("\x00", "").replace("\r", "")
-                    # Remove + and any digits after it
-                    # if "+" in barcode:
-                    #     barcode = barcode.split("+")[0]
-                    # if original_barcode != barcode:
-                    #     logging.debug(f"Cleaned barcode: '{original_barcode}' -> '{barcode}'")
-                        
-                if not barcode or barcode == "UNKNOWN":
-                    logging.debug(f" Skipping cycle with no valid barcode: {s['barcodes']}")
-                    continue
-                
-                prog     = s["progress"]             # { station: {status_1, status_2, ts}, … }
-                
-                logging.debug(f"Processing cycle with ID: {cycle_id}, original set_id: {original_set_id}, barcode: {barcode}")
-
-                # Get current shift
-                cur.execute("""
-                    SELECT id FROM shift_master
-                    WHERE (start_time < end_time AND start_time <= NOW()::time AND NOW()::time < end_time)
-                       OR (start_time > end_time AND (NOW()::time >= start_time OR NOW()::time < end_time))
-                    LIMIT 1
-                """)
-                row = cur.fetchone()
-                shift_id = row["id"] if row else 1  # Default to shift 1 if none found
-
-                # 2) Upsert cycle_master with all required fields
-                try:
-                    cur.execute("""
-                        INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts)
-                             VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (cycle_id) DO NOTHING
-                    """, (cycle_id, barcode, "system", shift_id, "default", s["created_ts"]))
-                    conn.commit()
-                    logging.debug(f" Created or found cycle: {cycle_id}")
-                except Exception as e:
-                    logging.error(f"Failed to insert cycle_master record: {e}")
-                    logging.debug(f"Raw insert values: cycle_id={repr(cycle_id)}, barcode={repr(barcode)}")
-                    conn.rollback()
-                    continue
-
-                # 3) For each station whose status_1 just turned ON
-                for stage, vals in prog.items():
-                    if vals["status_1"] == 1:
-                        try:
-                            # check if we've already logged this event
-                            cur.execute("""
-                                SELECT 1 FROM cycle_event
-                                 WHERE cycle_id=%s AND stage=%s
-                            """, (cycle_id, stage))
-                            
-                            if cur.fetchone() is None:
-                                # insert the event
-                                cur.execute("""
-                                    INSERT INTO cycle_event(cycle_id, stage, ts)
-                                         VALUES(%s, %s, %s)
-                                """, (cycle_id, stage, vals["ts"]))
-                                conn.commit()
-                                logging.debug(f" Added event for cycle {cycle_id}: {stage}")
-                        except Exception as e:
-                            logging.error(f"Failed to process cycle event: {e}")
-                            conn.rollback()
-
-                # 4) If unload_station.status_1 == 1 → finalize cycle
-                unload = prog.get("unload_station", {})
-                if unload.get("status_1") == 1:
-                    try:
-                        cur.execute("""
-                            UPDATE cycle_master
-                               SET end_ts = %s
-                             WHERE cycle_id = %s
-                               AND end_ts IS NULL
-                        """, (unload["ts"], cycle_id))
-                        conn.commit()
-                        logging.debug(f"Finalized cycle: {cycle_id}")
-                    except Exception as e:
-                        logging.error(f"Failed to finalize cycle: {e}")
-                        conn.rollback()
-                # 5) Check for analytics data in the set
-                if "analytics" in s and s["analytics"] and cycle_id:
-                    try:
-                        cur.execute(
-                            "INSERT INTO cycle_analytics(cycle_id, json_data) VALUES(%s, %s)",
-                            (cycle_id, json.dumps(s["analytics"]))
-                        )
-                        conn.commit()
-                        logger.info(f"Stored analytics data from machine status for cycle {cycle_id}")
-                    except Exception as e:
-                        logger.error(f"Failed to insert analytics data: {e}")
-                        conn.rollback()
-
-    except Exception as e:
-        logging.error(f" Unexpected error in machine_status consumer: {e}")      
-        logging.error(traceback.format_exc())
-    finally:
-        await consumer.stop()
-        logging.debug(f"Stopped machine_status consumer")
-
-# ─── Startup / Shutdown ───────────────────────────────────────────
-@app.on_event("startup")
-async def on_startup():
-    await init_kafka_producer()
-    
-    # Start WebSocket streaming for regular topics
-    for name, topic in WS_TOPICS.items():
-        asyncio.create_task(kafka_to_ws(name, topic))
-    
-    # Start separate machine-status WebSocket streaming
-    asyncio.create_task(kafka_machine_status_to_ws())
-    
-    # Start machine-status database processing (separate from WebSocket)
-    asyncio.create_task(consume_machine_status_and_populate_db())
-    
-    # Start PLC write responses
-    asyncio.create_task(listen_for_plc_write_responses())
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    if kafka_producer:
-        await kafka_producer.stop()
-    if conn:
-        conn.close()
-    if influx_client:
-        influx_client.close()
-
-# Add this function before the startup event
 async def kafka_machine_status_to_ws():
     """
     Separate Kafka consumer specifically for machine-status WebSocket streaming
@@ -1124,7 +816,7 @@ async def kafka_machine_status_to_ws():
                 group_id="machine_status_websocket_group"  # Different group from DB processing
             )
             await consumer.start()
-            logging.info("Started machine-status WebSocket streaming consumer")
+            logger.info("Started machine-status WebSocket streaming consumer")
             break
         except AIOKafkaNoBrokersAvailable:
             await asyncio.sleep(5)
@@ -1136,7 +828,167 @@ async def kafka_machine_status_to_ws():
             # Broadcast raw machine status to WebSocket clients
             await mgr.broadcast("machine-status", msg.value)
     except Exception as e:
-        logging.error(f"Error in machine-status WebSocket consumer: {e}")
+        logger.error(f"Error in machine-status WebSocket consumer: {e}")
     finally:
         await consumer.stop()
-        logging.info("Stopped machine-status WebSocket consumer")
+        logger.info("Stopped machine-status WebSocket consumer")
+
+
+async def listen_for_plc_write_responses():
+    """
+    Listen for PLC write responses and broadcast them
+    """
+    for i in range(10):
+        try:
+            consumer = AIOKafkaConsumer(
+                PLC_WRITE_RESPONSES_TOPIC,
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                auto_offset_reset="latest",
+                value_deserializer=lambda b: json.loads(b.decode()),
+                group_id="plc_write_responses_group"
+            )
+            await consumer.start()
+            logger.info("Started PLC write responses consumer")
+            break
+        except AIOKafkaNoBrokersAvailable:
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError("Cannot connect PLC write responses consumer")
+
+    try:
+        async for msg in consumer:
+            await mgr.broadcast("plc-write-responses", json.dumps(msg.value))
+    except Exception as e:
+        logger.error(f"Error in PLC write responses consumer: {e}")
+    finally:
+        await consumer.stop()
+        logger.info("Stopped PLC write responses consumer")
+
+# Also add the missing consume_machine_status_and_populate_db function
+async def consume_machine_status_and_populate_db():
+    """
+    Consume machine status from Kafka and process cycle data for database
+    """
+    for i in range(10):
+        try:
+            consumer = AIOKafkaConsumer(
+                MACHINE_STATUS_TOPIC,
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                auto_offset_reset="earliest",
+                value_deserializer=lambda b: json.loads(b.decode()),
+                group_id="machine_status_db_processor"
+            )
+            await consumer.start()
+            logger.info("Started machine status consumer for database processing")
+            break
+        except AIOKafkaNoBrokersAvailable:
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError("Cannot connect machine status consumer")
+
+    try:
+        async for msg in consumer:
+            payload = msg.value
+            
+            # Process machine status for cycle management
+            if "sets" in payload:
+                for set_data in payload["sets"]:
+                    # Extract and clean the set_id and barcodes
+                    original_set_id = set_data.get("set_id", "")
+                    if original_set_id:
+                        # Remove null bytes and + with any digits after it
+                        original_set_id = original_set_id.replace("\x00", "")
+                        if "+" in original_set_id:
+                            original_set_id = original_set_id.split("+")[0]
+                        
+                        # Generate deterministic UUID for cycle_id
+                        cycle_id = str(uuid.uuid5(uuid.NAMESPACE_OID, original_set_id))
+                        
+                        # Process barcodes
+                        barcodes = set_data.get("barcodes", [])
+                        primary_barcode = ""
+                        if barcodes:
+                            primary_barcode = str(barcodes[0]) if barcodes[0] else ""
+                            # Clean barcode
+                            if primary_barcode:
+                                primary_barcode = primary_barcode.replace("\x00", "")
+                                if "+" in primary_barcode:
+                                    primary_barcode = primary_barcode.split("+")[0]
+                        
+                        # Insert cycle if not exists
+                        try:
+                            cur.execute("""
+                                INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (cycle_id) DO NOTHING
+                            """, (cycle_id, primary_barcode, "system", 1, "default", set_data.get("created_ts")))
+                            
+                            if cur.rowcount > 0:
+                                logger.info(f"New cycle created: {cycle_id} with barcode: {primary_barcode}")
+                                
+                        except Exception as e:
+                            logger.error(f"Error inserting cycle {cycle_id}: {e}")
+                            
+            conn.commit()
+            
+    except Exception as e:
+        logger.error(f"Error in machine status consumer: {e}")
+    finally:
+        await consumer.stop()
+        logger.info("Stopped machine status consumer")
+
+# Update the startup function to include alarm processing
+@app.on_event("startup")
+async def on_startup():
+    await init_kafka_producer()
+    
+    # Start WebSocket streaming for all topics EXCEPT machine-status
+    for name, topic in WS_TOPICS.items():
+        asyncio.create_task(kafka_to_ws(name, topic))
+    
+    # Start separate machine-status WebSocket streaming
+    asyncio.create_task(kafka_machine_status_to_ws())
+    
+    # Handle machine-status separately for database processing only
+    asyncio.create_task(consume_machine_status_and_populate_db())
+    
+    # Add alarm processing
+    asyncio.create_task(consume_alarm_status_and_populate_db())
+    
+    # Start PLC write responses
+    asyncio.create_task(listen_for_plc_write_responses())
+
+@app.websocket("/ws/{stream}")
+async def websocket_endpoint(
+    websocket: WebSocket, 
+    stream: str,
+    operator: str = Depends(websocket_auth)
+):
+    """
+    Generic WebSocket endpoint for all streams except machine-status
+    """
+    if stream not in WS_TOPICS:
+        await websocket.close(code=4004, reason=f"Stream '{stream}' not found")
+        return
+    
+    await mgr.connect(stream, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        mgr.disconnect(stream, websocket)
+
+@app.websocket("/ws/machine-status")
+async def websocket_machine_status(
+    websocket: WebSocket,
+    operator: str = Depends(websocket_auth)
+):
+    """
+    Dedicated WebSocket endpoint for machine status data
+    """
+    await mgr.connect("machine-status", websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        mgr.disconnect("machine-status", websocket)

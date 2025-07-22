@@ -77,19 +77,6 @@ STATUS_BITS = [
     "MESUpload", "UnloadStation"
 ]
 
-# ─── PostgreSQL Setup ──────────────────────────────────────────────
-# DB_URL = os.getenv("DB_URL")
-# for _ in range(10):
-#     try:
-#         conn = psycopg2.connect(DB_URL)
-#         break
-#     except psycopg2.OperationalError:
-#         logging.error("PostgreSQL not ready, retrying in 5s…")
-#         time.sleep(5)
-# else:
-#     raise RuntimeError("PostgreSQL not available")
-# conn.autocommit = True
-# cur = conn.cursor(cursor_factory=RealDictCursor)
 
 # ─── Global AIOKafkaProducer Instance ──────────────────────────────────
 aio_producer: AIOKafkaProducer = None
@@ -578,22 +565,6 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
         await asyncio.sleep(1)
 
 
-# added for alarm inserting
-
-# def insert_alarm_if_active(cur, alarm_date, alarm_time, tag):
-#     # Optional: prevent inserting same alarm within 1 minute
-#     cur.execute("""
-#         SELECT 1 FROM alarm_master 
-#         WHERE alarm_code = %s 
-#         AND alarm_date = %s 
-#         AND alarm_time >= (now() - interval '1 minute')
-#     """, (tag, alarm_date))
-    
-#     if cur.fetchone() is None:
-#         cur.execute("""
-#             INSERT INTO alarm_master (alarm_date, alarm_time, alarm_code, message)
-#             VALUES (%s, %s, %s, %s)
-#         """, (alarm_date, alarm_time, tag, f"Alarm triggered at {tag}"))
 
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=5):
     """
@@ -628,7 +599,8 @@ async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interv
                     await aio_producer.send(topic, value=section_data)
                     print(f"[{now}] Sent '{section}' tags to Kafka topic '{topic}'.")
 
-                    # if section == "alarm":
+                    if section == "alarm":
+                        logger.info(f"Publishing alarm data to Kafka topic: {topic}")
                     #         alarm_time = now.split("T")[1]
                     #         alarm_date = now.split("T")[0]
 
@@ -809,12 +781,11 @@ async def main():
         logger.warning("🔧 SIMULATOR MODE ENABLED — skipping real PLC connect")
     else:     
         client = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
-        print(client,"clientttt")
 
         logger.info(f"Connecting to PLC at {PLC_HOST}:{PLC_PORT} for all tasks...")
         await client.connect()
         if not client.connected:
-            print("❌ Initial connection to PLC failed. Exiting.")
+            logger.error("❌ Initial connection to PLC failed. Exiting.")
             return
 
         logger.info(f"✅ Connected to PLC at {PLC_HOST}:{PLC_PORT}")
@@ -823,29 +794,26 @@ async def main():
         await init_aiokafka_producer()
 
         if not USE_SIMULATOR:
-            # client is your AsyncModbusTcpClient instance
+            # Login status listener
             asyncio.create_task(listen_for_login_status(client))
 
         if USE_SIMULATOR:
-            # fire up simulators instead of real PLC loops
+            # Simulators for testing
             asyncio.create_task(simulate_plc_data())
             asyncio.create_task(simulate_plc_write_responses())
         else:
-            # Specific PLC data (barcodes, 13-bit machine status)
+            # Real PLC data reading and publishing
             asyncio.create_task(read_specific_plc_data(client))
-            
-            # Generic tags (now per-section topics)
             asyncio.create_task(read_and_publish_per_section_loop(client, interval_seconds=5))
-            
-            # Kafka consumer for PLC write commands
             asyncio.create_task(kafka_write_consumer_loop(client))
 
+        # Keep running
         await asyncio.Future()
 
     except Exception as e:
         logger.exception(f"Unexpected error in main loop: {e}")
     finally:
-        if client.connected:
+        if client and client.connected:
             logger.info("Closing Modbus client connection.")
             client.close()
         if aio_producer:
