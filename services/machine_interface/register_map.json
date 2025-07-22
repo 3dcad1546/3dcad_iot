@@ -186,6 +186,7 @@
 
             "G2XREFERENCE": [1330, 1],
             "G2XOPENABLE": [1330, 2],
+            "G2XJOGENABLE":[1330,7],
             "G2XJOGFORWORD": [1330, 3],
             "G2XJOGREVERSE": [1330, 4],
             "G2XSTART": [1330, 5],
