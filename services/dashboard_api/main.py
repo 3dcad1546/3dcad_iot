@@ -1,4 +1,4 @@
-import os,json,time,threading,select,asyncio,requests,psycopg2,psycopg2.extensions,uuid,logging
+import os,json,time,threading,select,asyncio,requests,psycopg2,psycopg2.extensions,uuid,logging,traceback
 from logging.handlers import RotatingFileHandler
 from psycopg2.extras import RealDictCursor
 from psycopg2 import errors
@@ -453,7 +453,7 @@ def delete_variant(variant_id: int, user: str = Depends(require_login)):
 
 # alarm api
 
-@app.get("api/alarms", response_model=List[dict])
+@app.get("/api/alarms", response_model=List[dict])
 def get_alarms():
     """
     Returns all alarms from the alarms table.
@@ -758,7 +758,7 @@ def get_cycles(
 
 # ─── WebSocket Manager ────────────────────────────────────────────
 WS_TOPICS = {
-    "machine-status": MACHINE_STATUS_TOPIC,
+    #"machine-status": MACHINE_STATUS_TOPIC,
     "startup-status": STARTUP_STATUS,
     "manual-status":  MANUAL_STATUS,
     "auto-status":    AUTO_STATUS,
@@ -917,6 +917,27 @@ async def websocket_analytics(
     except WebSocketDisconnect:
         mgr.disconnect(stream, ws)
 
+@app.websocket("/ws/machine-status")
+async def websocket_machine_status(
+    ws: WebSocket,
+    operator: str = Depends(websocket_auth)
+):
+    """
+    Dedicated WebSocket endpoint for machine status data
+    """
+    stream = "machine-status"
+    
+    # Add machine-status to active connections manually
+    if stream not in mgr.active:
+        mgr.active[stream] = set()
+    
+    await mgr.connect(stream, ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        mgr.disconnect(stream, ws)
+
 
 async def consume_machine_status_and_populate_db():
     # 1) Create consumer
@@ -1055,19 +1076,28 @@ async def consume_machine_status_and_populate_db():
                         conn.rollback()
 
     except Exception as e:
-        logging.error(f" Unexpected error in machine_status consumer: {e}")
-        import traceback
-        traceback.print_exc()
+        logging.error(f" Unexpected error in machine_status consumer: {e}")      
+        logging.error(traceback.format_exc())
     finally:
         await consumer.stop()
         logging.debug(f"Stopped machine_status consumer")
+
 # ─── Startup / Shutdown ───────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
     await init_kafka_producer()
+    
+    # Start WebSocket streaming for regular topics
     for name, topic in WS_TOPICS.items():
         asyncio.create_task(kafka_to_ws(name, topic))
+    
+    # Start separate machine-status WebSocket streaming
+    asyncio.create_task(kafka_machine_status_to_ws())
+    
+    # Start machine-status database processing (separate from WebSocket)
     asyncio.create_task(consume_machine_status_and_populate_db())
+    
+    # Start PLC write responses
     asyncio.create_task(listen_for_plc_write_responses())
 
 @app.on_event("shutdown")
@@ -1078,3 +1108,35 @@ async def on_shutdown():
         conn.close()
     if influx_client:
         influx_client.close()
+
+# Add this function before the startup event
+async def kafka_machine_status_to_ws():
+    """
+    Separate Kafka consumer specifically for machine-status WebSocket streaming
+    """
+    for i in range(10):
+        try:
+            consumer = AIOKafkaConsumer(
+                MACHINE_STATUS_TOPIC,
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                auto_offset_reset="latest",  # Only get new messages for WebSocket
+                value_deserializer=lambda b: b.decode(),
+                group_id="machine_status_websocket_group"  # Different group from DB processing
+            )
+            await consumer.start()
+            logging.info("Started machine-status WebSocket streaming consumer")
+            break
+        except AIOKafkaNoBrokersAvailable:
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError("Cannot connect machine-status WebSocket consumer")
+
+    try:
+        async for msg in consumer:
+            # Broadcast raw machine status to WebSocket clients
+            await mgr.broadcast("machine-status", msg.value)
+    except Exception as e:
+        logging.error(f"Error in machine-status WebSocket consumer: {e}")
+    finally:
+        await consumer.stop()
+        logging.info("Stopped machine-status WebSocket consumer")
