@@ -671,6 +671,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             
         await asyncio.sleep(0.1)  # 10Hz instead of 1Hz - much faster!
 
+
+
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=5):
     """
     Periodically reads tags from each configured section and publishes them

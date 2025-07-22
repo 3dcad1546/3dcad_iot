@@ -112,6 +112,8 @@ WS_TOPICS = {
     "io-status":      IO_STATUS,
     "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
+    "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
+    "analytics": "other_streams_if_any",
 }
 
 # WebSocket Connection Manager
@@ -547,6 +549,298 @@ def get_alarms(
     except Exception as e:
         logger.error(f"Error fetching alarms: {e}")
         raise HTTPException(500, f"Failed to fetch alarms: {str(e)}")
+
+
+#receive webhook data
+@app.post("/edge/api/v1/analytics")
+async def receive_analytics(data: Dict):
+    logger.info(f"Received analytics webhook with keys: {list(data.keys())}")
+    
+    # Try multiple possible field names for barcode
+    barcode = None
+    for field in ["barcode", "part_id", "metadata", "serial"]:
+        if field in data and data[field]:
+            barcode = data[field]
+            logger.info(f"Found barcode identifier in field '{field}': {barcode}")
+            break
+    
+    if not barcode:
+        logger.warning(f"Analytics data received without any identifiable barcode fields: {data.keys()}")
+        return {"status": "warning", "message": "No barcode found in data"}
+    
+    # Find the corresponding cycle_id for this barcode
+    try:
+        cur.execute("SELECT cycle_id FROM cycle_master WHERE barcode = %s ORDER BY start_ts DESC LIMIT 1", 
+                   (barcode,))
+        row = cur.fetchone()
+        
+        if not row:
+            logger.warning(f"No cycle found for barcode {barcode} in analytics data")
+            return {"status": "warning", "message": f"No cycle found for barcode {barcode}"}
+        
+        cycle_id = row["cycle_id"]
+        
+        logger.info(f"Found cycle_id {cycle_id} for barcode {barcode}")
+
+        
+        
+        # Store the analytics data
+        cur.execute(
+            "INSERT INTO cycle_analytics(cycle_id, json_data) VALUES(%s, %s) RETURNING id",
+            (cycle_id, json.dumps(data))
+        )
+        analytics_id = cur.fetchone()["id"]
+        conn.commit()
+
+         # After successful storage, broadcast to WebSocket
+        await mgr.broadcast("analytics", json.dumps({
+            "cycle_id": cycle_id,
+            "barcode": barcode,
+            "analytics_id": analytics_id,
+            "analytics": data
+        }))
+        
+       
+        
+        logger.info(f"Successfully stored analytics data with ID {analytics_id} for cycle {cycle_id}")
+        return {"status": "success", "cycle_id": cycle_id, "analytics_id": analytics_id}
+        
+    except Exception as e:
+        logger.error(f"Error storing analytics data: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        conn.rollback()
+        return {"status": "error", "message": str(e)}
+
+# ─── Cycle Reporting Endpoint ──────────────────────────────────────
+class CycleVariantUpdate(BaseModel):
+    variant_id: int
+
+@app.put("/api/cycles/{cycle_id}/variant", response_model=Dict[str,str])
+def assign_cycle_variant(
+    cycle_id: str,
+    upd: CycleVariantUpdate,
+    user: str = Depends(require_login)
+):
+    # 1) look up the variant name
+    cur.execute("SELECT name FROM variant_master WHERE id=%s", (upd.variant_id,))
+    vr = cur.fetchone()
+    if not vr:
+        raise HTTPException(404, "Variant not found")
+    name = vr["name"]
+
+    # 2) update the cycle
+    cur.execute(
+        "UPDATE cycle_master SET variant=%s WHERE cycle_id=%s",
+        (name, cycle_id)
+    )
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Cycle not found")
+
+    return {"cycle_id": cycle_id, "variant": name}
+
+# og report changes working condition with analytics
+# @app.get("/api/cycles", response_model=List[CycleReportItem])
+# def get_cycles(
+#     operator: Optional[str] = None,
+#     shift_id: Optional[int] = None,
+#     barcode: Optional[str] = None,
+#     variant: Optional[str] = None,
+#     from_ts: Optional[datetime] = Query(None, alias="from"),
+#     to_ts: Optional[datetime] = Query(None, alias="to"),
+#     include_analytics: bool = Query(False),
+#     limit: int = Query(60, ge=1, le=100),
+#     user: str = Depends(require_login)
+# ):
+#     IST = timezone("Asia/Kolkata")
+    
+#     # Build WHERE clauses
+#     # Build WHERE clauses
+#     clauses, params = [], []
+#     if operator:
+#         clauses.append("cm.operator=%s"); params.append(operator)
+#     if shift_id is not None:
+#         clauses.append("cm.shift_id=%s"); params.append(shift_id)
+#     if barcode:
+#         clauses.append("cm.barcode=%s"); params.append(barcode)
+#     if variant:
+#         clauses.append("cm.variant=%s"); params.append(variant)
+#     if from_ts:
+#         from_ts_ist = from_ts.astimezone(IST)
+#         clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
+#     if to_ts:
+#         to_ts_ist = to_ts.astimezone(IST)
+#         clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
+    
+#     # Add explicit type casting for cycle_id comparison
+#     if operator:
+#         clauses.append("cm.operator=%s"); params.append(operator)
+#     if shift_id is not None:
+#         clauses.append("cm.shift_id=%s"); params.append(shift_id)
+#     if barcode:
+#         clauses.append("cm.barcode=%s"); params.append(barcode)
+#     if variant:
+#         clauses.append("cm.variant=%s"); params.append(variant)
+#     if from_ts:
+#         from_ts_ist = from_ts.astimezone(IST)
+#         clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
+#     if to_ts:
+#         to_ts_ist = to_ts.astimezone(IST)
+#         clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
+    
+#     # Add explicit type casting for cycle_id comparison
+#     analytics_select = ""
+#     analytics_join = ""
+    
+#     if include_analytics:
+#         analytics_select = ", COALESCE(jsonb_agg(ca.json_data) FILTER (WHERE ca.id IS NOT NULL), '[]'::jsonb) as analytics"
+#         analytics_join = "LEFT JOIN cycle_analytics ca ON ca.cycle_id = CAST(cm.cycle_id AS TEXT)"
+        
+    
+#     # Your SQL query with additions for analytics
+#     sql = f"""
+#     SELECT 
+#       cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
+#       cm.start_ts, cm.end_ts,
+#       jsonb_agg(jsonb_build_object('stage', ce.stage, 'ts', ce.ts)
+#                 ORDER BY ce.id) AS events
+#       {analytics_select}
+#     FROM cycle_master cm
+#     LEFT JOIN cycle_event ce ON ce.cycle_id = cm.cycle_id
+#     {analytics_join}
+#     WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
+#     GROUP BY cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode, cm.start_ts, cm.end_ts
+#     ORDER BY cm.start_ts DESC
+#     LIMIT %s
+#     """
+#     params.append(limit)
+    
+#     cur.execute(sql, params)
+#     rows = cur.fetchall()
+    
+#     # Update your result processing to include analytics
+#     result = []
+#     for r in rows:
+#         item = {
+#             "cycle_id": r["cycle_id"],
+#             "operator": r["operator"],
+#             "shift_id": r["shift_id"],
+#             "variant": r["variant"] or "",
+#             "barcode": r["barcode"],
+#             "start_ts": r["start_ts"].astimezone(IST),
+#             "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
+#             "events": [{"stage": e["stage"], "ts": e["ts"]} for e in (r["events"] or [])]
+
+#         }
+        
+#         # Add analytics if included
+#         if include_analytics and "analytics" in r and r["analytics"]:
+#             item["analytics"] = r["analytics"]
+        
+#         result.append(CycleReportItem(**item))
+    
+#     return result
+
+
+# this function added to include cycle_id in vision json_data also
+@app.get("/api/cycles", response_model=List[CycleReportItem])
+def get_cycles(
+    operator: Optional[str] = None,
+    shift_id: Optional[int] = None,
+    barcode: Optional[str] = None,
+    variant: Optional[str] = None,
+    from_ts: Optional[datetime] = Query(None, alias="from"),
+    to_ts: Optional[datetime] = Query(None, alias="to"),
+    include_analytics: bool = Query(False),
+    limit: int = Query(60, ge=1, le=100),
+    user: str = Depends(require_login)
+):
+    IST = timezone("Asia/Kolkata")
+
+    clauses, params = [], []
+    if operator:
+        clauses.append("cm.operator=%s"); params.append(operator)
+    if shift_id is not None:
+        clauses.append("cm.shift_id=%s"); params.append(shift_id)
+    if barcode:
+        clauses.append("cm.barcode=%s"); params.append(barcode)
+    if variant:
+        clauses.append("cm.variant=%s"); params.append(variant)
+    if from_ts:
+        from_ts_ist = from_ts.astimezone(IST)
+        clauses.append("cm.start_ts >= %s"); params.append(from_ts_ist)
+    if to_ts:
+        to_ts_ist = to_ts.astimezone(IST)
+        clauses.append("cm.start_ts <= %s"); params.append(to_ts_ist)
+
+    # SQL parts
+    analytics_cte = ""
+    analytics_join = ""
+    analytics_select = ""
+
+    if include_analytics:
+        analytics_cte = """
+        WITH analytics_agg AS (
+            SELECT
+                ca.cycle_id,
+                jsonb_agg(ca.json_data) AS data
+            FROM cycle_analytics ca
+            GROUP BY ca.cycle_id
+        )
+        """
+        analytics_join = "LEFT JOIN analytics_agg aa ON aa.cycle_id = cm.cycle_id"
+        analytics_select = """,
+        jsonb_build_object(
+            'cycle_id', cm.cycle_id,
+            'data', COALESCE(aa.data, '[]'::jsonb)
+        ) AS analytics
+        """
+
+    # Final SQL query
+    sql = f"""
+    {analytics_cte}
+    SELECT 
+      cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
+      cm.start_ts, cm.end_ts,
+      jsonb_agg(jsonb_build_object('stage', ce.stage, 'ts', ce.ts)
+                ORDER BY ce.id) AS events
+      {analytics_select}
+    FROM cycle_master cm
+    LEFT JOIN cycle_event ce ON ce.cycle_id = cm.cycle_id
+    {analytics_join}
+    WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
+    GROUP BY cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode, cm.start_ts, cm.end_ts
+    {', aa.data' if include_analytics else ''}
+    ORDER BY cm.start_ts DESC
+    LIMIT %s
+    """
+    params.append(limit)
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+
+    # Build result
+    result = []
+    for r in rows:
+        item = {
+            "cycle_id": r["cycle_id"],
+            "operator": r["operator"],
+            "shift_id": r["shift_id"],
+            "variant": r["variant"] or "",
+            "barcode": r["barcode"],
+            "start_ts": r["start_ts"].astimezone(IST),
+            "end_ts": r["end_ts"].astimezone(IST) if r["end_ts"] else None,
+            "events": [{"stage": e["stage"], "ts": e["ts"]} for e in (r["events"] or [])]
+        }
+
+        if include_analytics and r.get("analytics"):
+            # Wrap in array to match expected List[Dict] structure
+            item["analytics"] = [r["analytics"]]
+
+        result.append(CycleReportItem(**item))
+
+    return result
+
 
 # Add alarm acknowledgment endpoint
 @app.post("/api/alarms/{alarm_id}/acknowledge")
