@@ -907,27 +907,6 @@ async def consume_machine_status_and_populate_db():
         await consumer.stop()
         logger.info("Stopped machine status consumer")
 
-# Update the startup function to include alarm processing
-@app.on_event("startup")
-async def on_startup():
-    await init_kafka_producer()
-    
-    # Start WebSocket streaming for all topics EXCEPT machine-status
-    for name, topic in WS_TOPICS.items():
-        asyncio.create_task(kafka_to_ws(name, topic))
-    
-    # Start separate machine-status WebSocket streaming
-    asyncio.create_task(kafka_machine_status_to_ws())
-    
-    # Handle machine-status separately for database processing only
-    asyncio.create_task(consume_machine_status_and_populate_db())
-    
-    # Add alarm processing
-    asyncio.create_task(consume_alarm_status_and_populate_db())
-    
-    # Start PLC write responses
-    asyncio.create_task(listen_for_plc_write_responses())
-
 @app.websocket("/ws/{stream}")
 async def websocket_endpoint(
     websocket: WebSocket, 
@@ -962,3 +941,26 @@ async def websocket_machine_status(
             await websocket.receive_text()
     except WebSocketDisconnect:
         mgr.disconnect("machine-status", websocket)
+
+
+# Update the startup function to include alarm processing
+@app.on_event("startup")
+async def on_startup():
+    await init_kafka_producer()
+    
+    # Start WebSocket streaming for all topics EXCEPT machine-status
+    for name, topic in WS_TOPICS.items():
+        asyncio.create_task(kafka_to_ws(name, topic))
+    
+    # Start separate machine-status WebSocket streaming
+    asyncio.create_task(kafka_machine_status_to_ws())
+    
+    # Handle machine-status separately for database processing only
+    asyncio.create_task(consume_machine_status_and_populate_db())
+    
+    # Add alarm processing
+    asyncio.create_task(consume_alarm_status_and_populate_db())
+    
+    # Start PLC write responses
+    asyncio.create_task(listen_for_plc_write_responses())
+

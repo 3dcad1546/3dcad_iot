@@ -462,27 +462,130 @@ def decode_string(words):
 
 # ─── Main PLC Data Reading and Publishing Loops ──────────────────────────────────
 
-async def read_specific_plc_data(client: AsyncModbusTcpClient):
-    """
-    1) Watch the two global barcode flags (3303, 3304). When they BOTH
-       go from 0→1, read the loading_station’s two barcode blocks,
-       form a new set, and append to active_sets.
-    2) Every cycle, read status_1/2 for _every_ station and attach to each
-       active set’s .progress[name] = {status_1, status_2, ts}.
-    3) Publish the full active_sets list as one payload.
-    4) Retire a set once its unload_station status_1 goes high.
-    """
-    global _load_seen, active_sets
+# async def read_specific_plc_data(client: AsyncModbusTcpClient):
+#     """
+#     1) Watch the two global barcode flags (3303, 3304). When they BOTH
+#        go from 0→1, read the loading_station’s two barcode blocks,
+#        form a new set, and append to active_sets.
+#     2) Every cycle, read status_1/2 for _every_ station and attach to each
+#        active set’s .progress[name] = {status_1, status_2, ts}.
+#     3) Publish the full active_sets list as one payload.
+#     4) Retire a set once its unload_station status_1 goes high.
+#     """
+#     global _load_seen, active_sets
 
-    cfg      = read_json_file("register_map.json")
+#     cfg      = read_json_file("register_map.json")
+#     stations = cfg.get("stations", {})
+    
+    
+#     while True:
+#         async def read_bit(reg, bit):
+#             rr = await client.read_holding_registers(address=reg, count=1)
+#             return 0 if rr.isError() or not rr.registers else (rr.registers[0] >> bit) & 1
+#         # 0) ensure PLC connection
+#         if not client.connected:
+#             logger.warning("❌ PLC not connected—reconnecting…")
+#             try:
+#                 await client.connect()
+#             except:
+#                 await asyncio.sleep(2)
+#                 continue
+#             if not client.connected:
+#                 await asyncio.sleep(2)
+#                 continue
+
+#         now = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+#         # 1) Read global barcode_flags
+#         try:
+#             rr1 = await client.read_holding_registers(address=BARCODE_FLAG_1, count=1)
+#             rr2 = await client.read_holding_registers(address=BARCODE_FLAG_2, count=1)
+#             flag1 = bool(rr1.registers[0]) if not rr1.isError() else False
+#             flag2 = bool(rr2.registers[0]) if not rr2.isError() else False
+#         except:
+#             flag1 = flag2 = False
+
+#         flag1 = flag2 = True
+#         # 2) On rising edge of both flags → spawn a new set
+#         if flag1 and flag2 and not _load_seen:
+#             # read the two barcodes from your loading_station
+#             ld = stations["loading_station"]
+#             bcA = decode_string((await client.read_holding_registers(address=ld["barcode_block_1"][0], count=ld["barcode_block_1"][1])).registers)
+#             print(bcA,"bcAbcA")
+#             bcB = decode_string((await client.read_holding_registers(address=ld["barcode_block_2"][0], count=ld["barcode_block_2"][1])).registers)
+#             set_id = f"{bcA}|{bcB}"
+#             print(set_id,"setttt")
+#             if bcA or bcB:  # At least one valid barcode
+#                 set_id = f"{bcA}|{bcB}"
+#                 print(f"Creating new set with ID: {set_id}")
+#                 active_sets.append({
+#                     "set_id":     set_id,
+#                     "barcodes":   [bcA, bcB],
+#                     "progress":   {},         
+#                     "created_ts": now
+#                 })
+#             else:
+#                 print("WARNING: Skipping set creation due to empty barcodes")
+#         #     await client.write_register(BARCODE_FLAG_1, 0)
+#         #     await client.write_register(BARCODE_FLAG_2, 0)
+#         #     _load_seen = True
+
+#         # # once both flags drop, allow next rising edge:
+#         # if not (flag1 or flag2):
+#             _load_seen = False
+
+#         # 3) Read each station’s status_1/2 once per cycle
+        
+
+#         station_vals = {}
+#         for name, spec in stations.items():
+#             v1 = await read_bit(*spec["status_1"])
+#             v2 = await read_bit(*spec["status_2"])
+#             station_vals[name] = {"status_1": v1, "status_2": v2, "ts": now}
+
+#         # 4) Attach those readings to every active set
+#         for st in active_sets:
+#             for name, vals in station_vals.items():
+#                 st["progress"][name] = vals
+
+#         # 5) Retire any set that’s done at unload_station
+#         active_sets = [
+#             st for st in active_sets
+#             if st["progress"].get("unload_station", {}).get("status_1") != 1
+#         ]
+
+#         # 6) Publish the whole list in one shot
+#         payload = {"sets": active_sets, "ts": now}
+#         if aio_producer:
+#             await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=payload)
+#             logger.info(f"Published {len(active_sets)} active sets")
+#         else:
+#             logger.error("Kafka producer not ready; dropped machine_status")
+
+#         await asyncio.sleep(1)
+
+async def read_specific_plc_data(client: AsyncModbusTcpClient):
+    global _load_seen, active_sets
+    
+    cfg = read_json_file("register_map.json")
     stations = cfg.get("stations", {})
     
+    # Pre-calculate register ranges for batch reading
+    all_registers = []
+    register_map = {}
+    
+    for name, spec in stations.items():
+        reg1, bit1 = spec["status_1"]
+        reg2, bit2 = spec["status_2"]
+        all_registers.extend([reg1, reg2])
+        register_map[name] = {"status_1": (reg1, bit1), "status_2": (reg2, bit2)}
+    
+    # Find min/max range for batch read
+    min_reg = min(all_registers)
+    max_reg = max(all_registers)
+    read_count = max_reg - min_reg + 1
     
     while True:
-        async def read_bit(reg, bit):
-            rr = await client.read_holding_registers(address=reg, count=1)
-            return 0 if rr.isError() or not rr.registers else (rr.registers[0] >> bit) & 1
-        # 0) ensure PLC connection
         if not client.connected:
             logger.warning("❌ PLC not connected—reconnecting…")
             try:
@@ -490,81 +593,83 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             except:
                 await asyncio.sleep(2)
                 continue
-            if not client.connected:
-                await asyncio.sleep(2)
-                continue
-
+                
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
-
-        # 1) Read global barcode_flags
-        try:
-            rr1 = await client.read_holding_registers(address=BARCODE_FLAG_1, count=1)
-            rr2 = await client.read_holding_registers(address=BARCODE_FLAG_2, count=1)
-            flag1 = bool(rr1.registers[0]) if not rr1.isError() else False
-            flag2 = bool(rr2.registers[0]) if not rr2.isError() else False
-        except:
-            flag1 = flag2 = False
-
-        flag1 = flag2 = True
-        # 2) On rising edge of both flags → spawn a new set
-        if flag1 and flag2 and not _load_seen:
-            # read the two barcodes from your loading_station
-            ld = stations["loading_station"]
-            bcA = decode_string((await client.read_holding_registers(address=ld["barcode_block_1"][0], count=ld["barcode_block_1"][1])).registers)
-            print(bcA,"bcAbcA")
-            bcB = decode_string((await client.read_holding_registers(address=ld["barcode_block_2"][0], count=ld["barcode_block_2"][1])).registers)
-            set_id = f"{bcA}|{bcB}"
-            print(set_id,"setttt")
-            if bcA or bcB:  # At least one valid barcode
-                set_id = f"{bcA}|{bcB}"
-                print(f"Creating new set with ID: {set_id}")
-                active_sets.append({
-                    "set_id":     set_id,
-                    "barcodes":   [bcA, bcB],
-                    "progress":   {},         
-                    "created_ts": now
-                })
-            else:
-                print("WARNING: Skipping set creation due to empty barcodes")
-        #     await client.write_register(BARCODE_FLAG_1, 0)
-        #     await client.write_register(BARCODE_FLAG_2, 0)
-        #     _load_seen = True
-
-        # # once both flags drop, allow next rising edge:
-        # if not (flag1 or flag2):
-            _load_seen = False
-
-        # 3) Read each station’s status_1/2 once per cycle
         
+        try:
+            # SINGLE batch read instead of multiple individual reads
+            rr = await client.read_holding_registers(address=min_reg, count=read_count)
+            if rr.isError() or not rr.registers:
+                logger.error("Failed to read PLC registers")
+                await asyncio.sleep(0.1)  # Faster retry
+                continue
+                
+            # Extract values from batch read
+            station_vals = {}
+            for name, specs in register_map.items():
+                reg1, bit1 = specs["status_1"]
+                reg2, bit2 = specs["status_2"]
+                
+                val1_reg = rr.registers[reg1 - min_reg]
+                val2_reg = rr.registers[reg2 - min_reg]
+                
+                v1 = (val1_reg >> bit1) & 1
+                v2 = (val2_reg >> bit2) & 1
+                
+                station_vals[name] = {"status_1": v1, "status_2": v2, "ts": now}
+            
+            #barcode creation 
+            try:
+                rr1 = await client.read_holding_registers(address=BARCODE_FLAG_1, count=1)
+                rr2 = await client.read_holding_registers(address=BARCODE_FLAG_2, count=1)
+                flag1 = bool(rr1.registers[0]) if not rr1.isError() else False
+                flag2 = bool(rr2.registers[0]) if not rr2.isError() else False
+            except:
+                flag1 = flag2 = False
 
-        station_vals = {}
-        for name, spec in stations.items():
-            v1 = await read_bit(*spec["status_1"])
-            v2 = await read_bit(*spec["status_2"])
-            station_vals[name] = {"status_1": v1, "status_2": v2, "ts": now}
+            flag1 = flag2 = True
+            # 2) On rising edge of both flags → spawn a new set
+            if flag1 and flag2 and not _load_seen:
+                # read the two barcodes from your loading_station
+                ld = stations["loading_station"]
+                bcA = decode_string((await client.read_holding_registers(address=ld["barcode_block_1"][0], count=ld["barcode_block_1"][1])).registers)
+                print(bcA,"bcAbcA")
+                bcB = decode_string((await client.read_holding_registers(address=ld["barcode_block_2"][0], count=ld["barcode_block_2"][1])).registers)
+                set_id = f"{bcA}|{bcB}"
+                print(set_id,"setttt")
+                if bcA or bcB:  # At least one valid barcode
+                    set_id = f"{bcA}|{bcB}"
+                    print(f"Creating new set with ID: {set_id}")
+                    active_sets.append({
+                        "set_id":     set_id,
+                        "barcodes":   [bcA, bcB],
+                        "progress":   {},         
+                        "created_ts": now
+                    })
+                else:
+                    print("WARNING: Skipping set creation due to empty barcodes")
+            #     await client.write_register(BARCODE_FLAG_1, 0)
+            #     await client.write_register(BARCODE_FLAG_2, 0)
+            #     _load_seen = True
 
-        # 4) Attach those readings to every active set
-        for st in active_sets:
-            for name, vals in station_vals.items():
-                st["progress"][name] = vals
-
-        # 5) Retire any set that’s done at unload_station
-        active_sets = [
-            st for st in active_sets
-            if st["progress"].get("unload_station", {}).get("status_1") != 1
-        ]
-
-        # 6) Publish the whole list in one shot
-        payload = {"sets": active_sets, "ts": now}
-        if aio_producer:
-            await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=payload)
-            logger.info(f"Published {len(active_sets)} active sets")
-        else:
-            logger.error("Kafka producer not ready; dropped machine_status")
-
-        await asyncio.sleep(1)
-
-
+            # # once both flags drop, allow next rising edge:
+            # if not (flag1 or flag2):
+                _load_seen = False
+            
+            # Update active sets
+            for st in active_sets:
+                for name, vals in station_vals.items():
+                    st["progress"][name] = vals
+                    
+            # Publish immediately
+            payload = {"sets": active_sets, "ts": now}
+            if aio_producer:
+                await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=payload)
+                
+        except Exception as e:
+            logger.error(f"Error in PLC read cycle: {e}")
+            
+        await asyncio.sleep(0.1)  # 10Hz instead of 1Hz - much faster!
 
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=5):
     """
