@@ -105,6 +105,7 @@ KAFKA_BOOTSTRAP = get_cfg("KAFKA_BROKER", "kafka:9092")
 
 # WebSocket Topics (remove machine-status from here since it's handled separately)
 WS_TOPICS = {
+    "machine-status": MACHINE_STATUS_TOPIC,
     "startup-status": STARTUP_STATUS,
     "manual-status":  MANUAL_STATUS,
     "auto-status":    AUTO_STATUS,
@@ -1065,37 +1066,7 @@ async def init_kafka_producer():
     else:
         raise RuntimeError("Cannot connect Kafka producer")
 
-
-async def kafka_machine_status_to_ws():
-    """
-    Separate Kafka consumer specifically for machine-status WebSocket streaming
-    """
-    for i in range(10):
-        try:
-            consumer = AIOKafkaConsumer(
-                MACHINE_STATUS_TOPIC,
-                bootstrap_servers=KAFKA_BOOTSTRAP,
-                auto_offset_reset="latest",  # Only get new messages for WebSocket
-                value_deserializer=lambda b: b.decode(),
-                group_id="machine_status_websocket_group"  # Different group from DB processing
-            )
-            await consumer.start()
-            logger.info("Started machine-status WebSocket streaming consumer")
-            break
-        except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
-    else:
-        raise RuntimeError("Cannot connect machine-status WebSocket consumer")
-
-    try:
-        async for msg in consumer:
-            # Broadcast raw machine status to WebSocket clients
-            await mgr.broadcast("machine-status", msg.value)
-    except Exception as e:
-        logger.error(f"Error in machine-status WebSocket consumer: {e}")
-    finally:
-        await consumer.stop()
-        logger.info("Stopped machine-status WebSocket consumer")
+# ─── PLC Write Responses ────────────────────────────────────────────
 
 
 async def listen_for_plc_write_responses():
@@ -1217,18 +1188,36 @@ async def websocket_endpoint(websocket: WebSocket, stream: str):
     except WebSocketDisconnect:
         mgr.disconnect(stream, websocket)
 
-@app.websocket("/ws/machine-status")
-async def websocket_machine_status(websocket: WebSocket):
-    """
-    Dedicated WebSocket endpoint for machine status data
-    """
-    await mgr.connect("machine-status", websocket)
+@app.websocket("/ws/plc-write")
+async def ws_plc_write(ws: WebSocket, operator: str = Depends(websocket_auth)):
+    await mgr.connect("plc-write-responses", ws)
     try:
         while True:
-            await websocket.receive_text()
+            data = await ws.receive_json()
+            cmd = PlcWriteCommand(**data)
+            rid = cmd.request_id or str(uuid.uuid4())
+            cmd.request_id = rid
+            mgr.pending[rid] = ws
+            if not kafka_producer:
+                raise RuntimeError("Kafka producer not initialized")
+            await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, cmd.dict())
+            await ws.send_json({"type":"ack","status":"pending","request_id":rid})
     except WebSocketDisconnect:
-        mgr.disconnect("machine-status", websocket)
+        mgr.disconnect("plc-write-responses", ws)
 
+@app.websocket("/ws/analytics")
+async def websocket_analytics(
+    ws: WebSocket
+):
+    # Define the stream name
+    stream = "analytics"  # Add this line to define the stream variable
+    
+    await mgr.connect(stream, ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        mgr.disconnect(stream, ws)
 
 # Update the startup function to include alarm processing
 @app.on_event("startup")
@@ -1238,9 +1227,6 @@ async def on_startup():
     # Start WebSocket streaming for all topics EXCEPT machine-status
     for name, topic in WS_TOPICS.items():
         asyncio.create_task(kafka_to_ws(name, topic))
-    
-    # Start separate machine-status WebSocket streaming
-    asyncio.create_task(kafka_machine_status_to_ws())
     
     # Handle machine-status separately for database processing only
     asyncio.create_task(consume_machine_status_and_populate_db())
