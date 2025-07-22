@@ -908,11 +908,7 @@ async def consume_machine_status_and_populate_db():
         logger.info("Stopped machine status consumer")
 
 @app.websocket("/ws/{stream}")
-async def websocket_endpoint(
-    websocket: WebSocket, 
-    stream: str,
-    operator: str = Depends(websocket_auth)
-):
+async def websocket_endpoint(websocket: WebSocket, stream: str):
     """
     Generic WebSocket endpoint for all streams except machine-status
     """
@@ -928,10 +924,7 @@ async def websocket_endpoint(
         mgr.disconnect(stream, websocket)
 
 @app.websocket("/ws/machine-status")
-async def websocket_machine_status(
-    websocket: WebSocket,
-    operator: str = Depends(websocket_auth)
-):
+async def websocket_machine_status(websocket: WebSocket):
     """
     Dedicated WebSocket endpoint for machine status data
     """
