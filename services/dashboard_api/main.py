@@ -1113,7 +1113,7 @@ async def consume_set_updates():
                 value_deserializer=lambda b: json.loads(b.decode()),
                 group_id="machine_status_set_updates"
             )
-            # Subscribe to the pattern for individual set updates
+            # Use pattern subscription to catch all sanitized topic names
             await consumer.start()
             await consumer.subscribe(pattern=f"{MACHINE_STATUS_TOPIC}.set.*")
             logger.info(f"Started consumer for individual set updates on pattern {MACHINE_STATUS_TOPIC}.set.*")
@@ -1125,23 +1125,23 @@ async def consume_set_updates():
 
     try:
         async for msg in consumer:
-            set_data = msg.value
-            if not set_data:
-                continue
+            try:
+                set_data = msg.value
+                if not set_data:
+                    continue
+                    
+                # Forward to all connected machine-status clients
+                await mgr.broadcast("machine-status", json.dumps({
+                    "type": "set_update",
+                    "data": set_data
+                }))
                 
-            # Forward to all connected machine-status clients
-            await mgr.broadcast("machine-status", json.dumps({
-                "type": "set_update",
-                "data": set_data
-            }))
-            
-            # Log every 10th message to avoid excessive logging
-            if random.randint(1, 10) == 1:
-                set_id = set_data.get("set", {}).get("set_id", "unknown")
-                logger.debug(f"Forwarded set update for {set_id} to WebSocket clients")
-                
-    except Exception as e:
-        logger.error(f"Error in set updates consumer: {e}")
+                if random.randint(1, 10) == 1:  # Log only 10% of messages to reduce noise
+                    set_id = set_data.get("set", {}).get("set_id", "unknown")
+                    logger.debug(f"Forwarded set update for {set_id} to WebSocket clients")
+                    
+            except Exception as e:
+                logger.error(f"Error processing set update: {e}")
     finally:
         await consumer.stop()
         logger.info("Stopped set updates consumer")

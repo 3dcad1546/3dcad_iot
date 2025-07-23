@@ -1,4 +1,4 @@
-import os,json,time,asyncio,logging,requests,struct
+import os,json,time,asyncio,logging,requests,struct,re
 from typing import Dict
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
@@ -570,6 +570,27 @@ def decode_string(words):
 #             logger.error("Kafka producer not ready; dropped machine_status")
 
 #         await asyncio.sleep(1)
+
+def sanitize_topic_name(topic_base, identifier):
+    """
+    Sanitizes a string to be used as part of a Kafka topic name.
+    - Replaces invalid characters with '_'
+    - Truncates if too long
+    - Ensures the final topic name is valid
+    """
+    # Step 1: Replace invalid characters with underscore
+    sanitized = re.sub(r'[^a-zA-Z0-9\._\-]', '_', identifier)
+    
+    # Step 2: Ensure topic isn't too long (max Kafka topic length is 249)
+    max_id_length = 20  # Reserve space for the base name and separator
+    if len(sanitized) > max_id_length:
+        sanitized = sanitized[:max_id_length]
+    
+    # Step 3: Create full topic name
+    full_topic = f"{topic_base}.{sanitized}"
+    
+    return full_topic
+
 async def read_specific_plc_data(client: AsyncModbusTcpClient):
     """
     Advanced workpiece tracking system that:
@@ -759,11 +780,11 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                             "ts": now
                         }
                         
-                        logger.info(f"📊 Publishing update for set {current_set['set_id']}")
+                        logger.info(f"Publishing update for set {current_set['set_id']}")
                         
                         # Send to both set-specific topic and general topic
-                        await aio_producer.send(f"{KAFKA_TOPIC_MACHINE_STATUS}.set.{current_set['set_id']}", 
-                                              value=set_payload)
+                        sanitized_topic = sanitize_topic_name(f"{KAFKA_TOPIC_MACHINE_STATUS}.set", current_set['set_id'])
+                        await aio_producer.send(sanitized_topic, value=set_payload)
                         
                         # Also send a notification to the general topic about this update
                         await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value={
