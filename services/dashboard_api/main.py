@@ -114,6 +114,7 @@ WS_TOPICS = {
     "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
     "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
+    "plc-write": PLC_WRITE_COMMANDS_TOPIC, 
     "analytics": "other_streams_if_any"
 }
 
@@ -1328,7 +1329,7 @@ async def ws_plc_write(ws: WebSocket):
         if not ws.client_state.state == 4:  # If not already closed
             await ws.close(code=1011, reason=f"Error: {str(e)}")
 
-            
+
 @app.websocket("/ws/analytics")
 async def websocket_analytics(ws: WebSocket):
     # Define the stream name
