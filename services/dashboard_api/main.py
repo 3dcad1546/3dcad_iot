@@ -1339,7 +1339,7 @@ async def ws_plc_write(ws: WebSocket):
                 await ws.send_json({"type":"error","message":str(e)})
                 
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected from plc-write-responses")
+        logger.info("WebSocket disconnected from plc-write")
         mgr.disconnect("plc-write", ws)
     except Exception as e:
         logger.error(f"Error in plc-write WebSocket: {e}")
@@ -1362,11 +1362,13 @@ async def websocket_analytics(ws: WebSocket):
 # Update the startup function to include alarm processing
 @app.on_event("startup")
 async def on_startup():
+    dedicated_streams = {"machine-status", "plc-write", "plc-write-responses"}
     await init_kafka_producer()
     
     # Start WebSocket streaming for all topics EXCEPT machine-status
     for name, topic in WS_TOPICS.items():
-        asyncio.create_task(kafka_to_ws(name, topic))
+        if name not in dedicated_streams:
+            asyncio.create_task(kafka_to_ws(name, topic))
     
     # Handle machine-status separately for database processing only
     asyncio.create_task(consume_machine_status_and_populate_db())
