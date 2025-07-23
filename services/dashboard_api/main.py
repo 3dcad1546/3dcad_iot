@@ -113,7 +113,7 @@ WS_TOPICS = {
     "io-status":      IO_STATUS,
     "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
-    "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
+    "plc-write": PLC_WRITE_RESPONSES_TOPIC,
     "analytics": "other_streams_if_any",
 }
 
@@ -1248,13 +1248,8 @@ async def websocket_machine_status(websocket: WebSocket):
     2. Handling both individual and batch updates
     3. Initial state delivery
     """
-    # 1. First, accept the connection
-    await websocket.accept()
-    
-    # 2. Then create a special version of mgr.connect that doesn't call accept again
-    if "machine-status" not in mgr.active:
-        mgr.active["machine-status"] = set()
-    mgr.active["machine-status"].add(websocket)
+    logger.info("WebSocket connection attempt to /ws/machine-status")
+    await mgr.connect("machine-status", websocket)
     
     logger.info("WebSocket connected to machine-status")
 
