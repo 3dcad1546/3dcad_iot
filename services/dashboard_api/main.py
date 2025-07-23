@@ -113,7 +113,7 @@ WS_TOPICS = {
     "io-status":      IO_STATUS,
     "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
-    "plc-write": PLC_WRITE_RESPONSES_TOPIC,
+    "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
     "analytics": "other_streams_if_any",
 }
 
@@ -1067,38 +1067,31 @@ async def init_kafka_producer():
     else:
         raise RuntimeError("Cannot connect Kafka producer")
 
-# ─── PLC Write Responses ────────────────────────────────────────────
-
-
+# ─── Listen for PLC write responses ────────────────────────────────
 async def listen_for_plc_write_responses():
-    """
-    Listen for PLC write responses and broadcast them
-    """
     for i in range(10):
         try:
             consumer = AIOKafkaConsumer(
                 PLC_WRITE_RESPONSES_TOPIC,
                 bootstrap_servers=KAFKA_BOOTSTRAP,
                 auto_offset_reset="latest",
-                value_deserializer=lambda b: json.loads(b.decode()),
-                group_id="plc_write_responses_group"
+                value_deserializer=lambda b: json.loads(b.decode())
             )
             await consumer.start()
-            logger.info("Started PLC write responses consumer")
             break
         except AIOKafkaNoBrokersAvailable:
             await asyncio.sleep(5)
     else:
-        raise RuntimeError("Cannot connect PLC write responses consumer")
+        raise RuntimeError("Cannot start response consumer")
 
     try:
         async for msg in consumer:
-            await mgr.broadcast("plc-write-responses", json.dumps(msg.value))
-    except Exception as e:
-        logger.error(f"Error in PLC write responses consumer: {e}")
+            payload = msg.value
+            request_id = payload.get("request_id")
+            if request_id:
+                await mgr.send_write_response(request_id, payload)
     finally:
         await consumer.stop()
-        logger.info("Stopped PLC write responses consumer")
 
 async def consume_set_updates():
     """
@@ -1300,10 +1293,10 @@ async def ws_plc_write(ws: WebSocket):
     logger.info("WebSocket connected to plc-write-responses")
     try:
         while True:
-            data_raw = await ws.receive_text()
+            data = await ws.receive_json()
             logger.info(f"Received WebSocket data: {data_raw[:100]}...")
             
-            data = json.loads(data_raw)
+            # data = json.loads(data_raw)
             cmd = PlcWriteCommand(**data)
             rid = cmd.request_id or str(uuid.uuid4())
             cmd.request_id = rid
@@ -1363,3 +1356,11 @@ async def on_startup():
     # Start PLC write responses
     asyncio.create_task(listen_for_plc_write_responses())
 
+@app.on_event("shutdown")
+async def on_shutdown():
+    if kafka_producer:
+        await kafka_producer.stop()
+    if conn:
+        conn.close()
+    if influx_client:
+        influx_client.close()
