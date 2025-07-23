@@ -114,7 +114,7 @@ WS_TOPICS = {
     "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
     "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
-    "analytics": "other_streams_if_any",
+    "analytics": "other_streams_if_any"
 }
 
 # WebSocket Connection Manager
