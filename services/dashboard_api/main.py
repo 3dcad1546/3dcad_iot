@@ -162,6 +162,10 @@ class ConnectionManager:
                 logger.error(f"Error sending response to WebSocket for request_id {request_id}: {e}")
         else:
             logger.warning(f"No pending request found for request_id {request_id}")
+    async def broadcast_to_both_streams(self, message):
+        """Broadcast to both plc-write and plc-write-responses streams"""
+        await self.broadcast("plc-write", message)
+        await self.broadcast("plc-write-responses", message)
 mgr = ConnectionManager()
 
 # ─── variant_master  ───────────────────────────────────
@@ -1103,6 +1107,7 @@ async def listen_for_plc_write_responses():
             request_id = payload.get("request_id")
             if request_id:
                 await mgr.send_write_response(request_id, payload)
+                await mgr.broadcast("plc-write", json.dumps(payload))
     finally:
         await consumer.stop()
 
@@ -1302,8 +1307,8 @@ async def websocket_machine_status(websocket: WebSocket):
 @app.websocket("/ws/plc-write")
 async def ws_plc_write(ws: WebSocket):
     logger.info("WebSocket connection attempt to /ws/plc-write")
-    await mgr.connect("plc-write-responses", ws)
-    logger.info("WebSocket connected to plc-write-responses")
+    await mgr.connect("plc-write", ws)
+    logger.info("WebSocket connected to plc-write")
     try:
         while True:
             data_raw = await ws.receive_text()  # Get as text first
@@ -1335,7 +1340,7 @@ async def ws_plc_write(ws: WebSocket):
                 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected from plc-write-responses")
-        mgr.disconnect("plc-write-responses", ws)
+        mgr.disconnect("plc-write", ws)
     except Exception as e:
         logger.error(f"Error in plc-write WebSocket: {e}")
         if not ws.client_state.state == 4:  # If not already closed
