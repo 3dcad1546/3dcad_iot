@@ -114,7 +114,6 @@ WS_TOPICS = {
     "alarm-status":   ALARM_STATUS,
     "oee-status":     OEE_STATUS,
     "plc-write-responses": PLC_WRITE_RESPONSES_TOPIC,
-    "plc-write": PLC_WRITE_COMMANDS_TOPIC, 
     "analytics": "other_streams_if_any"
 }
 
@@ -149,23 +148,14 @@ class ConnectionManager:
             # Clean up dead connections
             for connection in dead_connections:
                 self.active[stream].discard(connection)
-    async def send_write_response(self, request_id, payload):
-        """Send a response back to the WebSocket that made the original request"""
-        if hasattr(self, 'pending') and request_id in self.pending:
-            ws = self.pending[request_id]
+    async def send_write_response(self, request_id: str, payload: dict):
+        ws = self.pending.pop(request_id, None)
+        if ws:
             try:
-                await ws.send_json(payload)
-                logger.info(f"Sent response for request_id {request_id}")
-                # Optional: clean up after sending
-                # del self.pending[request_id]
-            except Exception as e:
-                logger.error(f"Error sending response to WebSocket for request_id {request_id}: {e}")
-        else:
-            logger.warning(f"No pending request found for request_id {request_id}")
-    async def broadcast_to_both_streams(self, message):
-        """Broadcast to both plc-write and plc-write-responses streams"""
-        await self.broadcast("plc-write", message)
-        await self.broadcast("plc-write-responses", message)
+                await ws.send_json({"type":"plc_write_response","data":payload})
+            except:
+                pass
+    
 mgr = ConnectionManager()
 
 # ─── variant_master  ───────────────────────────────────
@@ -1107,7 +1097,6 @@ async def listen_for_plc_write_responses():
             request_id = payload.get("request_id")
             if request_id:
                 await mgr.send_write_response(request_id, payload)
-                await mgr.broadcast("plc-write", json.dumps(payload))
     finally:
         await consumer.stop()
 
@@ -1307,7 +1296,7 @@ async def websocket_machine_status(websocket: WebSocket):
 @app.websocket("/ws/plc-write")
 async def ws_plc_write(ws: WebSocket):
     logger.info("WebSocket connection attempt to /ws/plc-write")
-    await mgr.connect("plc-write", ws)
+    await mgr.connect("plc-write-responses", ws)
     logger.info("WebSocket connected to plc-write")
     try:
         while True:
@@ -1318,11 +1307,7 @@ async def ws_plc_write(ws: WebSocket):
             try:
                 cmd = PlcWriteCommand(**data)
                 rid = cmd.request_id or str(uuid.uuid4())
-                cmd.request_id = rid
-                
-                if not hasattr(mgr, 'pending'):
-                    mgr.pending = {}
-                    
+                cmd.request_id = rid    
                 mgr.pending[rid] = ws
                 
                 logger.info(f"Sending command to Kafka: {cmd.dict()}")
@@ -1367,8 +1352,8 @@ async def on_startup():
     
     # Start WebSocket streaming for all topics EXCEPT machine-status
     for name, topic in WS_TOPICS.items():
-        if name not in dedicated_streams:
-            asyncio.create_task(kafka_to_ws(name, topic))
+        # if name not in dedicated_streams:
+        asyncio.create_task(kafka_to_ws(name, topic))
     
     # Handle machine-status separately for database processing only
     asyncio.create_task(consume_machine_status_and_populate_db())

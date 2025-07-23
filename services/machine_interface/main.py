@@ -912,35 +912,35 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
     AIOKafkaConsumer loop that listens for write commands and executes them on the PLC.
     This runs entirely asynchronously.
     """
-    logger.info("Starting kafka_write_consumer_loop")
+    print("cominginsidekafka_write_consumer_loop")
     consumer = None
-    logger.info(f"Starting AIOKafkaConsumer for write commands on topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
+    print(f"Starting AIOKafkaConsumer for write commands on topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
     for attempt in range(10):
         try:
             consumer = AIOKafkaConsumer(
                 KAFKA_TOPIC_WRITE_COMMANDS,
                 bootstrap_servers=KAFKA_BROKER,
                 group_id='plc-write-gateway-group',
-                auto_offset_reset='latest',
+                auto_offset_reset='earliest',
                 value_deserializer=lambda x: json.loads(x.decode('utf-8'))
             )
             await consumer.start()
-            logger.info(f"Successfully connected to Kafka topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
+            print("[AIOKafka Consumer] Write command consumer started.")
             break
-        except AIOKafkaNoBrokersAvailable as e:
-            logger.error(f"Attempt {attempt+1}/10 to connect to Kafka failed: {e}")
+        except AIOKafkaNoBrokersAvailable:
+            print(f"[AIOKafka Consumer] Kafka not ready for consumer. Retrying ({attempt + 1}/10)...")
             await asyncio.sleep(5)
         except Exception as e:
-            logger.error(f"[AIOKafka Consumer] Error starting consumer: {e}. Retrying ({attempt + 1}/10)...")
+            print(f"[AIOKafka Consumer] Error starting consumer: {e}. Retrying ({attempt + 1}/10)...")
             await asyncio.sleep(5)
     else:
-        logger.error("Failed to connect to Kafka after 10 attempts")
-        return
+        raise RuntimeError("Failed to connect to AIOKafkaConsumer after 10 attempts")
+
     try:
         async for message in consumer:
             now = time.strftime("%Y-%m-%dT%H:%M:%S")
-            logger.info(f"[{now}] Received Kafka write command: {message.value}")
-
+            print(f"[{now}] Received Kafka write command: {message.value}")
+            
             command = message.value
             section = command.get("section")
             tag_name = command.get("tag_name")
