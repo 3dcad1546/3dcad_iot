@@ -793,20 +793,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                             "current_station": current_set.get("current_station"),
                             "ts": now
                         })
-            
-            # 6. RETIRE COMPLETED SETS (unload_station status_1 = 1)
-            before_count = len(active_sets)
-            active_sets = [
-                st for st in active_sets
-                if st["progress"].get("unload_station", {}).get("status_1") != 1
-            ]
-            removed_count = before_count - len(active_sets)
-            
-            if removed_count > 0:
-                logger.info(f"Retired {removed_count} completed sets")
-                any_set_updated = True
-            
-            # 7. PUBLISH ALL SETS PERIODICALLY (BATCH UPDATE)
+            # 6. PUBLISH ALL SETS PERIODICALLY (BATCH UPDATE)
             if any_set_updated and aio_producer:
                 full_payload = {
                     "sets": active_sets, 
@@ -842,6 +829,19 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                             })
                         except Exception as e:
                             logger.error(f"Error publishing set update: {e}")
+            # 7. RETIRE COMPLETED SETS (unload_station status_1 = 1)
+            before_count = len(active_sets)
+            active_sets = [
+                st for st in active_sets
+                if st["progress"].get("unload_station", {}).get("status_1") != 1
+            ]
+            removed_count = before_count - len(active_sets)
+            
+            if removed_count > 0:
+                logger.info(f"Retired {removed_count} completed sets")
+                any_set_updated = True
+            
+            
             
         except Exception as e:
             logger.error(f"Error in read_specific_plc_data: {e}", exc_info=True)
