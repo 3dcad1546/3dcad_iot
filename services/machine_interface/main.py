@@ -478,6 +478,13 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     stations = cfg.get("stations", {})
     
     
+    # Limit read size to reasonable chunk (Modbus protocol typically limits to 125 registers)
+    if read_count > 125:
+        logger.warning(f"Register range too large ({read_count}), using multiple batch reads")
+        use_multiple_batches = True
+    else:
+        use_multiple_batches = False
+    
     while True:
         async def read_bit(reg, bit):
             rr = await client.read_holding_registers(address=reg, count=1)

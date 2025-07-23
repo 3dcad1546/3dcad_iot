@@ -120,7 +120,8 @@ WS_TOPICS = {
 # WebSocket Connection Manager
 class ConnectionManager:
     def __init__(self):
-        self.active: Dict[str, set] = {}
+        self.active: Dict[str, set[WebSocket]] = {s:set() for s in WS_TOPICS}
+        self.pending: Dict[str, WebSocket]   = {}
 
     async def connect(self, stream: str, websocket: WebSocket):
         await websocket.accept()
@@ -1189,26 +1190,44 @@ async def websocket_endpoint(websocket: WebSocket, stream: str):
         mgr.disconnect(stream, websocket)
 
 @app.websocket("/ws/plc-write")
-async def ws_plc_write(ws: WebSocket, operator: str = Depends(websocket_auth)):
+async def ws_plc_write(ws: WebSocket):
+    logger.info("WebSocket connection attempt to /ws/plc-write")
     await mgr.connect("plc-write-responses", ws)
+    logger.info("WebSocket connected to plc-write-responses")
     try:
         while True:
-            data = await ws.receive_json()
+            data_raw = await ws.receive_text()
+            logger.info(f"Received WebSocket data: {data_raw[:100]}...")
+            
+            data = json.loads(data_raw)
             cmd = PlcWriteCommand(**data)
             rid = cmd.request_id or str(uuid.uuid4())
             cmd.request_id = rid
+            
+            if not hasattr(mgr, 'pending'):
+                mgr.pending = {}
+                
             mgr.pending[rid] = ws
+            
+            logger.info(f"Sending command to Kafka: {cmd.dict()}")
             if not kafka_producer:
+                logger.error("Kafka producer not initialized")
                 raise RuntimeError("Kafka producer not initialized")
+                
             await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, cmd.dict())
+            logger.info(f"Command sent to Kafka, sending ACK for request_id: {rid}")
+            
             await ws.send_json({"type":"ack","status":"pending","request_id":rid})
     except WebSocketDisconnect:
+        logger.info("WebSocket disconnected from plc-write-responses")
         mgr.disconnect("plc-write-responses", ws)
+    except Exception as e:
+        logger.error(f"Error in plc-write WebSocket: {e}")
+        if not ws.client_state.state == 4:  # If not already closed
+            await ws.close(code=1011, reason=f"Error: {str(e)}")
 
 @app.websocket("/ws/analytics")
-async def websocket_analytics(
-    ws: WebSocket
-):
+async def websocket_analytics(ws: WebSocket):
     # Define the stream name
     stream = "analytics"  # Add this line to define the stream variable
     
