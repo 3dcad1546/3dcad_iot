@@ -1293,28 +1293,33 @@ async def ws_plc_write(ws: WebSocket):
     logger.info("WebSocket connected to plc-write-responses")
     try:
         while True:
-            data = await ws.receive_json()
+            data_raw = await ws.receive_text()  # Get as text first
+            data = json.loads(data_raw)  # Parse JSON
             logger.info(f"Received WebSocket data: {data_raw[:100]}...")
             
-            # data = json.loads(data_raw)
-            cmd = PlcWriteCommand(**data)
-            rid = cmd.request_id or str(uuid.uuid4())
-            cmd.request_id = rid
-            
-            if not hasattr(mgr, 'pending'):
-                mgr.pending = {}
+            try:
+                cmd = PlcWriteCommand(**data)
+                rid = cmd.request_id or str(uuid.uuid4())
+                cmd.request_id = rid
                 
-            mgr.pending[rid] = ws
-            
-            logger.info(f"Sending command to Kafka: {cmd.dict()}")
-            if not kafka_producer:
-                logger.error("Kafka producer not initialized")
-                raise RuntimeError("Kafka producer not initialized")
+                if not hasattr(mgr, 'pending'):
+                    mgr.pending = {}
+                    
+                mgr.pending[rid] = ws
                 
-            await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, cmd.dict())
-            logger.info(f"Command sent to Kafka, sending ACK for request_id: {rid}")
-            
-            await ws.send_json({"type":"ack","status":"pending","request_id":rid})
+                logger.info(f"Sending command to Kafka: {cmd.dict()}")
+                if not kafka_producer:
+                    logger.error("Kafka producer not initialized")
+                    raise RuntimeError("Kafka producer not initialized")
+                    
+                await kafka_producer.send_and_wait(PLC_WRITE_COMMANDS_TOPIC, cmd.dict())
+                logger.info(f"Command sent to Kafka, sending ACK for request_id: {rid}")
+                
+                await ws.send_json({"type":"ack","status":"pending","request_id":rid})
+            except Exception as e:
+                logger.error(f"Error processing PLC write command: {str(e)}")
+                await ws.send_json({"type":"error","message":str(e)})
+                
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected from plc-write-responses")
         mgr.disconnect("plc-write-responses", ws)
@@ -1323,6 +1328,7 @@ async def ws_plc_write(ws: WebSocket):
         if not ws.client_state.state == 4:  # If not already closed
             await ws.close(code=1011, reason=f"Error: {str(e)}")
 
+            
 @app.websocket("/ws/analytics")
 async def websocket_analytics(ws: WebSocket):
     # Define the stream name
