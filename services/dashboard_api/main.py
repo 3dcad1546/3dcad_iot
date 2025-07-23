@@ -1219,22 +1219,7 @@ async def consume_machine_status_and_populate_db():
         await consumer.stop()
         logger.info("Stopped machine status consumer")
 
-@app.websocket("/ws/{stream}")
-async def websocket_endpoint(websocket: WebSocket, stream: str):
-    """
-    Generic WebSocket endpoint for all streams except those with dedicated handlers
-    """
-    
-    if stream not in WS_TOPICS:
-        await websocket.close(code=4004, reason=f"Stream '{stream}' not found")
-        return
-    
-    await mgr.connect(stream, websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        mgr.disconnect(stream, websocket)
+
 
 @app.websocket("/ws/machine-status")
 async def websocket_machine_status(websocket: WebSocket):
@@ -1343,6 +1328,23 @@ async def websocket_analytics(ws: WebSocket):
             await ws.receive_text()
     except WebSocketDisconnect:
         mgr.disconnect(stream, ws)
+
+@app.websocket("/ws/{stream}")
+async def websocket_endpoint(websocket: WebSocket, stream: str):
+    """
+    Generic WebSocket endpoint for all streams except those with dedicated handlers
+    """
+    
+    if stream not in WS_TOPICS:
+        await websocket.close(code=4004, reason=f"Stream '{stream}' not found")
+        return
+    
+    await mgr.connect(stream, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        mgr.disconnect(stream, websocket)
 
 # Update the startup function to include alarm processing
 @app.on_event("startup")
