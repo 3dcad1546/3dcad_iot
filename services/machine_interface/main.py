@@ -912,9 +912,9 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
     AIOKafkaConsumer loop that listens for write commands and executes them on the PLC.
     This runs entirely asynchronously.
     """
-    print("cominginsidekafka_write_consumer_loop")
+    logger.info("cominginsidekafka_write_consumer_loop")
     consumer = None
-    print(f"Starting AIOKafkaConsumer for write commands on topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
+    logger.info(f"Starting AIOKafkaConsumer for write commands on topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
     for attempt in range(10):
         try:
             consumer = AIOKafkaConsumer(
@@ -925,13 +925,13 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
                 value_deserializer=lambda x: json.loads(x.decode('utf-8'))
             )
             await consumer.start()
-            print("[AIOKafka Consumer] Write command consumer started.")
+            logger.info(f"Successfully connected to Kafka topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
             break
-        except AIOKafkaNoBrokersAvailable:
-            print(f"[AIOKafka Consumer] Kafka not ready for consumer. Retrying ({attempt + 1}/10)...")
+        except AIOKafkaNoBrokersAvailable as e:
+            logger.error(f"Attempt {attempt+1}/10 to connect to Kafka failed: {e}")
             await asyncio.sleep(5)
         except Exception as e:
-            print(f"[AIOKafka Consumer] Error starting consumer: {e}. Retrying ({attempt + 1}/10)...")
+            logger.error(f"[AIOKafka Consumer] Error starting consumer: {e}. Retrying ({attempt + 1}/10)...")
             await asyncio.sleep(5)
     else:
         raise RuntimeError("Failed to connect to AIOKafkaConsumer after 10 attempts")
