@@ -149,7 +149,19 @@ class ConnectionManager:
             # Clean up dead connections
             for connection in dead_connections:
                 self.active[stream].discard(connection)
-
+    async def send_write_response(self, request_id, payload):
+        """Send a response back to the WebSocket that made the original request"""
+        if hasattr(self, 'pending') and request_id in self.pending:
+            ws = self.pending[request_id]
+            try:
+                await ws.send_json(payload)
+                logger.info(f"Sent response for request_id {request_id}")
+                # Optional: clean up after sending
+                # del self.pending[request_id]
+            except Exception as e:
+                logger.error(f"Error sending response to WebSocket for request_id {request_id}: {e}")
+        else:
+            logger.warning(f"No pending request found for request_id {request_id}")
 mgr = ConnectionManager()
 
 # ─── variant_master  ───────────────────────────────────
