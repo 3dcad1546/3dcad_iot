@@ -1100,6 +1100,52 @@ async def listen_for_plc_write_responses():
         await consumer.stop()
         logger.info("Stopped PLC write responses consumer")
 
+async def consume_set_updates():
+    """
+    Consume individual set updates from set-specific topics 
+    and broadcast them to machine-status WebSocket clients
+    """
+    for i in range(10):
+        try:
+            consumer = AIOKafkaConsumer(
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                auto_offset_reset="latest",
+                value_deserializer=lambda b: json.loads(b.decode()),
+                group_id="machine_status_set_updates"
+            )
+            # Subscribe to the pattern for individual set updates
+            await consumer.start()
+            await consumer.subscribe(pattern=f"{MACHINE_STATUS_TOPIC}.set.*")
+            logger.info(f"Started consumer for individual set updates on pattern {MACHINE_STATUS_TOPIC}.set.*")
+            break
+        except AIOKafkaNoBrokersAvailable:
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError("Cannot connect to Kafka for set updates")
+
+    try:
+        async for msg in consumer:
+            set_data = msg.value
+            if not set_data:
+                continue
+                
+            # Forward to all connected machine-status clients
+            await mgr.broadcast("machine-status", json.dumps({
+                "type": "set_update",
+                "data": set_data
+            }))
+            
+            # Log every 10th message to avoid excessive logging
+            if random.randint(1, 10) == 1:
+                set_id = set_data.get("set", {}).get("set_id", "unknown")
+                logger.debug(f"Forwarded set update for {set_id} to WebSocket clients")
+                
+    except Exception as e:
+        logger.error(f"Error in set updates consumer: {e}")
+    finally:
+        await consumer.stop()
+        logger.info("Stopped set updates consumer")
+
 # Also add the missing consume_machine_status_and_populate_db function
 async def consume_machine_status_and_populate_db():
     """
@@ -1176,8 +1222,13 @@ async def consume_machine_status_and_populate_db():
 @app.websocket("/ws/{stream}")
 async def websocket_endpoint(websocket: WebSocket, stream: str):
     """
-    Generic WebSocket endpoint for all streams except machine-status
+    Generic WebSocket endpoint for all streams except those with dedicated handlers
     """
+    # Skip streams that have dedicated handlers
+    if stream == "machine-status":
+        await websocket.close(code=4000, reason="Use /ws/machine-status endpoint instead")
+        return
+    
     if stream not in WS_TOPICS:
         await websocket.close(code=4004, reason=f"Stream '{stream}' not found")
         return
@@ -1188,6 +1239,63 @@ async def websocket_endpoint(websocket: WebSocket, stream: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         mgr.disconnect(stream, websocket)
+        
+@app.websocket("/ws/machine-status")
+async def websocket_machine_status(websocket: WebSocket):
+    """
+    Dedicated WebSocket endpoint for machine status with support for:
+    1. Real-time set updates
+    2. Handling both individual and batch updates
+    3. Initial state delivery
+    """
+    await websocket.accept()
+    await mgr.connect("machine-status", websocket)
+    
+    try:
+        # Send initial full state on connection
+        consumer = AIOKafkaConsumer(
+            f"{MACHINE_STATUS_TOPIC}.full",
+            bootstrap_servers=KAFKA_BOOTSTRAP,
+            auto_offset_reset="latest",
+            group_id=f"ws-init-{str(uuid.uuid4())}",  # Unique consumer group
+            consumer_timeout_ms=5000,
+            value_deserializer=lambda b: json.loads(b.decode())
+        )
+        await consumer.start()
+        
+        # Try to get the latest full update
+        try:
+            # Set a timeout for initial state fetch
+            start_time = time.time()
+            async for msg in consumer:
+                if msg.value and "sets" in msg.value:
+                    await websocket.send_json(msg.value)
+                    logger.info("Sent initial machine status to new client")
+                    break
+                
+                # Timeout after 2 seconds
+                if time.time() - start_time > 2:
+                    logger.warning("Timeout waiting for initial machine status")
+                    break
+        except Exception as e:
+            logger.error(f"Error fetching initial machine status: {e}")
+        
+        await consumer.stop()
+        
+        # Stay connected for ongoing messages
+        while True:
+            data = await websocket.receive_text()
+            # Process any client commands if needed
+            await websocket.send_json({"type": "ack", "message": "received"})
+            
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected from machine-status")
+        mgr.disconnect("machine-status", websocket)
+    except Exception as e:
+        logger.error(f"Error in machine-status WebSocket: {e}")
+        if hasattr(websocket, 'client_state') and websocket.client_state.state != 4:  # Not closed
+            await websocket.close(code=1011, reason=f"Error: {str(e)}")
+
 
 @app.websocket("/ws/plc-write")
 async def ws_plc_write(ws: WebSocket):
@@ -1245,11 +1353,19 @@ async def on_startup():
     
     # Start WebSocket streaming for all topics EXCEPT machine-status
     for name, topic in WS_TOPICS.items():
+        if name != "machine-status":  # Skip machine-status as it's handled specially
+            asyncio.create_task(kafka_to_ws(name, topic))
+    
+    # Start WebSocket streaming for all topics EXCEPT machine-status
+    for name, topic in WS_TOPICS.items():
         asyncio.create_task(kafka_to_ws(name, topic))
     
     # Handle machine-status separately for database processing only
     asyncio.create_task(consume_machine_status_and_populate_db())
     
+    #Add consumer for individual set updates
+    asyncio.create_task(consume_set_updates())
+
     # Add alarm processing
     asyncio.create_task(consume_alarm_status_and_populate_db())
     
