@@ -1252,10 +1252,10 @@ async def websocket_machine_status(websocket: WebSocket):
     try:
         # Send initial full state on connection
         consumer = AIOKafkaConsumer(
-            f"{MACHINE_STATUS_TOPIC}.full",
+            MACHINE_STATUS_TOPIC,  # Listen to the main topic, not .full suffix
             bootstrap_servers=KAFKA_BOOTSTRAP,
             auto_offset_reset="latest",
-            group_id=f"ws-init-{str(uuid.uuid4())}",  # Unique consumer group
+            group_id=f"ws-init-{str(uuid.uuid4())}",
             consumer_timeout_ms=5000,
             value_deserializer=lambda b: json.loads(b.decode())
         )
@@ -1263,9 +1263,9 @@ async def websocket_machine_status(websocket: WebSocket):
         
         # Try to get the latest full update
         try:
-            # Set a timeout for initial state fetch
             start_time = time.time()
             async for msg in consumer:
+                # Forward any message with "sets" field as initial state
                 if msg.value and "sets" in msg.value:
                     await websocket.send_json(msg.value)
                     logger.info("Sent initial machine status to new client")
@@ -1283,7 +1283,6 @@ async def websocket_machine_status(websocket: WebSocket):
         # Stay connected for ongoing messages
         while True:
             data = await websocket.receive_text()
-            # Process any client commands if needed
             await websocket.send_json({"type": "ack", "message": "received"})
             
     except WebSocketDisconnect:
@@ -1291,9 +1290,8 @@ async def websocket_machine_status(websocket: WebSocket):
         mgr.disconnect("machine-status", websocket)
     except Exception as e:
         logger.error(f"Error in machine-status WebSocket: {e}")
-        if hasattr(websocket, 'client_state') and websocket.client_state.state != 4:  # Not closed
+        if hasattr(websocket, 'client_state') and websocket.client_state.state != 4:
             await websocket.close(code=1011, reason=f"Error: {str(e)}")
-
 
 @app.websocket("/ws/plc-write")
 async def ws_plc_write(ws: WebSocket):
