@@ -1224,10 +1224,6 @@ async def websocket_endpoint(websocket: WebSocket, stream: str):
     """
     Generic WebSocket endpoint for all streams except those with dedicated handlers
     """
-    # Skip streams that have dedicated handlers
-    if stream == "machine-status":
-        await websocket.close(code=4000, reason="Use /ws/machine-status endpoint instead")
-        return
     
     if stream not in WS_TOPICS:
         await websocket.close(code=4004, reason=f"Stream '{stream}' not found")
@@ -1355,9 +1351,7 @@ async def on_startup():
     
     # Start WebSocket streaming for all topics EXCEPT machine-status
     for name, topic in WS_TOPICS.items():
-        if name != "machine-status":  # Skip machine-status as it's handled specially
-            asyncio.create_task(kafka_to_ws(name, topic))
-    
+        asyncio.create_task(kafka_to_ws(name, topic))
     
     # Handle machine-status separately for database processing only
     asyncio.create_task(consume_machine_status_and_populate_db())
