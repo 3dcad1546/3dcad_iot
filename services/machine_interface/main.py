@@ -803,7 +803,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             removed_count = before_count - len(active_sets)
             
             if removed_count > 0:
-                logger.info(f"🏁 Retired {removed_count} completed sets")
+                logger.info(f"Retired {removed_count} completed sets")
                 any_set_updated = True
             
             # 7. PUBLISH ALL SETS PERIODICALLY (BATCH UPDATE)
@@ -912,7 +912,7 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
     AIOKafkaConsumer loop that listens for write commands and executes them on the PLC.
     This runs entirely asynchronously.
     """
-    logger.info("cominginsidekafka_write_consumer_loop")
+    logger.info("Starting kafka_write_consumer_loop")
     consumer = None
     logger.info(f"Starting AIOKafkaConsumer for write commands on topic: {KAFKA_TOPIC_WRITE_COMMANDS}")
     for attempt in range(10):
@@ -921,7 +921,7 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
                 KAFKA_TOPIC_WRITE_COMMANDS,
                 bootstrap_servers=KAFKA_BROKER,
                 group_id='plc-write-gateway-group',
-                auto_offset_reset='earliest',
+                auto_offset_reset='latest',
                 value_deserializer=lambda x: json.loads(x.decode('utf-8'))
             )
             await consumer.start()
@@ -934,13 +934,13 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
             logger.error(f"[AIOKafka Consumer] Error starting consumer: {e}. Retrying ({attempt + 1}/10)...")
             await asyncio.sleep(5)
     else:
-        raise RuntimeError("Failed to connect to AIOKafkaConsumer after 10 attempts")
-
+        logger.error("Failed to connect to Kafka after 10 attempts")
+        return
     try:
         async for message in consumer:
             now = time.strftime("%Y-%m-%dT%H:%M:%S")
-            print(f"[{now}] Received Kafka write command: {message.value}")
-            
+            logger.info(f"[{now}] Received Kafka write command: {message.value}")
+
             command = message.value
             section = command.get("section")
             tag_name = command.get("tag_name")

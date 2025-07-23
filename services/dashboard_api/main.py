@@ -1189,10 +1189,10 @@ async def consume_machine_status_and_populate_db():
                     # Extract and clean the set_id and barcodes
                     original_set_id = set_data.get("set_id", "")
                     if original_set_id:
-                        # Remove null bytes and + with any digits after it
-                        original_set_id = original_set_id.replace("\x00", "")
-                        if "+" in original_set_id:
-                            original_set_id = original_set_id.split("+")[0]
+                        # # Remove null bytes and + with any digits after it
+                        # original_set_id = original_set_id.replace("\x00", "")
+                        # if "+" in original_set_id:
+                        #     original_set_id = original_set_id.split("+")[0]
                         
                         # Generate deterministic UUID for cycle_id
                         cycle_id = str(uuid.uuid5(uuid.NAMESPACE_OID, original_set_id))
