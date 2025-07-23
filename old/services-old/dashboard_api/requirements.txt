@@ -1,7 +1,0 @@
-fastapi
-pydantic
-requests
-psycopg2-binary
-influxdb-client
-aiokafka
-uvicorn[standard]

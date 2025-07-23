@@ -1,3 +1,0 @@
-pymodbus>=3.1.0
-aiokafka
-requests
