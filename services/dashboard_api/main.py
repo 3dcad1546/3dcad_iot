@@ -1248,7 +1248,7 @@ async def websocket_machine_status(websocket: WebSocket):
     2. Handling both individual and batch updates
     3. Initial state delivery
     """
-    await websocket.accept()
+    logger.info("WebSocket connection attempt to /ws/plc-write")
     await mgr.connect("machine-status", websocket)
     logger.info("WebSocket connected to machine-status")
 
