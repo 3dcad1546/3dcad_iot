@@ -1,0 +1,5 @@
+
+aiokafka
+requests
+asyncio
+influxdb-client

@@ -1,0 +1,3 @@
+aiokafka
+asyncio-mqtt
+psycopg2-binary
