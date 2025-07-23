@@ -1248,8 +1248,14 @@ async def websocket_machine_status(websocket: WebSocket):
     2. Handling both individual and batch updates
     3. Initial state delivery
     """
-    logger.info("WebSocket connection attempt to /ws/plc-write")
-    await mgr.connect("machine-status", websocket)
+    # 1. First, accept the connection
+    await websocket.accept()
+    
+    # 2. Then create a special version of mgr.connect that doesn't call accept again
+    if "machine-status" not in mgr.active:
+        mgr.active["machine-status"] = set()
+    mgr.active["machine-status"].add(websocket)
+    
     logger.info("WebSocket connected to machine-status")
 
     try:
