@@ -192,7 +192,15 @@
             "G2XSTART": [1330, 5],
             "G2XSTOP": [1330, 6],
             "G2XERRORACKNOWLEDGE": [1330, 7],
+
+
             "MANUALHOME":940,
+            "EMERGENCY": [1610, 4],
+            "MANUAL": [1610, 1],
+            "CONTROL": [1610, 2],
+            "FAULT": [1610, 3],
+            "CYCLE": [1610, 0],
+
             "LD_JOGFORWORD": [
                 1130,
                 3
@@ -416,7 +424,7 @@
     },
     "auto": {
         "read": {
-            "OK": 1950,
+            "OK": 1920,
             "NOK": 1952,
             "NR": 1954,
             "SKIP": 1956,
