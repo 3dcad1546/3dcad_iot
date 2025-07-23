@@ -1239,7 +1239,7 @@ async def websocket_endpoint(websocket: WebSocket, stream: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         mgr.disconnect(stream, websocket)
-        
+
 @app.websocket("/ws/machine-status")
 async def websocket_machine_status(websocket: WebSocket):
     """
@@ -1250,7 +1250,8 @@ async def websocket_machine_status(websocket: WebSocket):
     """
     await websocket.accept()
     await mgr.connect("machine-status", websocket)
-    
+    logger.info("WebSocket connected to machine-status")
+
     try:
         # Send initial full state on connection
         consumer = AIOKafkaConsumer(
@@ -1356,9 +1357,6 @@ async def on_startup():
         if name != "machine-status":  # Skip machine-status as it's handled specially
             asyncio.create_task(kafka_to_ws(name, topic))
     
-    # Start WebSocket streaming for all topics EXCEPT machine-status
-    for name, topic in WS_TOPICS.items():
-        asyncio.create_task(kafka_to_ws(name, topic))
     
     # Handle machine-status separately for database processing only
     asyncio.create_task(consume_machine_status_and_populate_db())
