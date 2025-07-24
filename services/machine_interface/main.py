@@ -761,11 +761,17 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     # Always update with latest status
                     current_set.setdefault("progress", {})[name] = vals
                 
-                # Mark station as current if status_1 is active
+                # Always set current_station: if none are active, set to last known or None
+                active_station = None
                 for name, vals in current_set["progress"].items():
                     if vals["status_1"] == 1:
-                        current_set["current_station"] = name
+                        active_station = name
                         break
+                if active_station:
+                    current_set["current_station"] = active_station
+                else:
+                    # If no station is active, keep previous or set to None
+                    current_set["current_station"] = current_set.get("current_station", None)
                 
                 # 5. REAL-TIME UPDATES - PUBLISH INDIVIDUAL SET CHANGES
                 if set_updated:
@@ -803,32 +809,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 if aio_producer:
                     await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=full_payload)
                     logger.info(f"Published full update with {len(active_sets)} active sets")
-                # Then for individual set updates (if any were updated):
-                if any_set_updated and aio_producer:
-                    for current_set in active_sets:
-                        set_payload = {
-                            "set": current_set,
-                            "type": "set_update",
-                            "ts": now
-                        }
-                        
-                        # Use sanitized topic for individual updates
-                        try:
-                            sanitized_topic = sanitize_topic_name(
-                                f"{KAFKA_TOPIC_MACHINE_STATUS}.set", 
-                                current_set['set_id']
-                            )
-                            await aio_producer.send(sanitized_topic, value=set_payload)
-                            
-                            # Also send notification to main topic (this is what you're currently getting)
-                            await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value={
-                                "type": "set_update", 
-                                "set_id": current_set["set_id"],
-                                "current_station": current_set.get("current_station"),
-                                "ts": now
-                            })
-                        except Exception as e:
-                            logger.error(f"Error publishing set update: {e}")
+                
             # 7. RETIRE COMPLETED SETS (unload_station status_1 = 1)
             before_count = len(active_sets)
             active_sets = [
