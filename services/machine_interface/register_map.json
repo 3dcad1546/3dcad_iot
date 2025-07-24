@@ -197,12 +197,13 @@
             "G2YJOGENABLE":[1370,8],
             "G2XJOGENABLE":[1330,8],
 
-            "MANUALHOME":940,
-            "EMERGENCY": [1610, 4],
-            "MANUAL": [1610, 1],
-            "CONTROL": [1610, 2],
-            "FAULT": [1610, 3],
-            "CYCLE": [1610, 0],
+            "MANUALHOME":[1610,8],
+
+            "EMERGENCY": [1610,4],
+            "MANUAL": [1610,1],
+            "CONTROL": [1610,2],
+            "FAULT": [1610,3],
+            "CYCLE": [1610,0],
 
             "LD_JOGFORWORD": [
                 1130,
@@ -667,6 +668,7 @@
             "CONTROLLER_STATUS": 1001,
             "PROGRAM_STATUS": 1002,
             "ROBO_HOME":1003,
+            "ROBOHOMING":11,
             "LCMR_MODE_XBOT2": { "address": 1060, "type": "holding" },
             "CONTROLLER_STATUS_XBOT2": { "address": 1061, "type": "holding" },
             "STATUS_XBOT2": { "address": 1062, "type": "holding" },
@@ -676,9 +678,12 @@
             "CONTROLLER_STATUS_XBOT1": { "address": 1021, "type": "holding" },
             "STATUS_XBOT1": { "address": 1022, "type": "holding" },
             "ACTUAL_POS_XBOT1": { "address": 1023, "type": "holding" }
-            
+
         },
         "write": {
+
+            "ROBOHOMING":[1610,9],
+
             "ABORT_PROGRAM": [
                 1010,
                 0
@@ -1202,6 +1207,7 @@
  "alarm": {
 "read": {
   "M7001": { "address": 7001, "type": "coil" },
+  "M7034":{ "address": 7034, "type": "coil" },
   "M7002": { "address": 7002, "type": "coil" },
   "M7003": { "address": 7003, "type": "coil" },
   "M7005": { "address": 7005, "type": "coil" },

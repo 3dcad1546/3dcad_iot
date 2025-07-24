@@ -12,6 +12,7 @@ from aiokafka.errors import KafkaConnectionError, NoBrokersAvailable as AIOKafka
 from fastapi.middleware.cors import CORSMiddleware 
 from pytz import timezone
 from dateutil.parser import isoparse
+from zoneinfo import ZoneInfo
 
 # Ensure log directory exists
 log_dir = "/services/dashboard_api/logs"
@@ -811,8 +812,11 @@ def get_cycles(
     SELECT 
       cm.cycle_id, cm.operator, cm.shift_id, cm.variant, cm.barcode,
       cm.start_ts, cm.end_ts,
-      jsonb_agg(jsonb_build_object('stage', ce.stage, 'ts', ce.ts)
-                ORDER BY ce.id) AS events
+      jsonb_agg(
+            jsonb_build_object('stage', ce.stage, 'ts', ce.ts)
+            ORDER BY ce.id
+        ) FILTER (WHERE ce.stage IS NOT NULL AND ce.ts IS NOT NULL) AS events
+
       {analytics_select}
     FROM cycle_master cm
     LEFT JOIN cycle_event ce ON ce.cycle_id = cm.cycle_id
@@ -955,8 +959,9 @@ async def consume_alarm_status_and_populate_db():
                 try:
                     # Parse timestamp to get date and time
                     dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                    alarm_date = dt.date()
-                    alarm_time = dt.time()
+                    dt_ist = dt.astimezone(ZoneInfo("Asia/Kolkata"))
+                    alarm_date = dt_ist.date()
+                    alarm_time = dt_ist.time()
                 except:
                     # Fallback to current time
                     now = datetime.now()
