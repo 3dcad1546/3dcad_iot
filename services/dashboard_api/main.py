@@ -762,7 +762,7 @@ def get_cycles(
     from_ts: Optional[datetime] = Query(None, alias="from"),
     to_ts: Optional[datetime] = Query(None, alias="to"),
     include_analytics: bool = Query(False),
-    limit: int = Query(60, ge=1, le=100),
+    # limit: int = Query(60, ge=1, le=100),
     user: str = Depends(require_login)
 ):
     IST = timezone("Asia/Kolkata")
@@ -827,7 +827,7 @@ def get_cycles(
     ORDER BY cm.start_ts DESC
     LIMIT %s
     """
-    params.append(limit)
+    # params.append(limit)
 
     cur.execute(sql, params)
     rows = cur.fetchall()

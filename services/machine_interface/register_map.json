@@ -669,7 +669,7 @@
             "CONTROLLER_STATUS": 1001,
             "PROGRAM_STATUS": 1002,
             "ROBO_HOME":1003,
-            "LCMRHOMING":11,
+            "LCMRHOMING":{ "address": 930, "type": "coil" },
             "LCMR_MODE_XBOT2": { "address": 1060, "type": "holding" },
             "CONTROLLER_STATUS_XBOT2": { "address": 1061, "type": "holding" },
             "STATUS_XBOT2": { "address": 1062, "type": "holding" },
