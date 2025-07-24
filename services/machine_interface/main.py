@@ -727,38 +727,34 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             
             for set_idx, current_set in enumerate(active_sets):
                 set_updated = False
-                
                 for name, vals in station_vals.items():
-                    # Check if status changed for this station
-                    current_vals = current_set.get("progress", {}).get(name, {"status_1": 0, "status_2": 0})
-                    if vals["status_1"] != current_vals.get("status_1") or vals["status_2"] != current_vals.get("status_2"):
-                        # Status changed, update with both status and associated barcode
+                    prev = current_set.get("progress", {}).get(name, {})
+                    prev_status_1 = prev.get("status_1", 0)
+                    prev_ts = prev.get("ts", None)
+                    prev_barcode_1 = prev.get("barcode_1", None)
+                    prev_barcode_2 = prev.get("barcode_2", None)
+                    prev_latched = prev.get("latched", False)
+
+                    # Rising edge: latch and record timestamp/barcode
+                    if prev_status_1 == 0 and vals["status_1"] == 1:
+                        vals["ts"] = now
+                        vals["latched"] = True
+                        # (barcode reading logic here, as in your code)
                         set_updated = True
-                        
-                        # Read associated barcode for this station if status_1 changed from 0->1
-                        if name in station_changes and station_changes[name]["status_1"].get("old") == 0 and vals["status_1"] == 1:
-                            station_spec = stations[name]
-                            if "barcode_block_1" in station_spec and "barcode_block_2" in station_spec:
-                                bc1_start, bc1_count = station_spec["barcode_block_1"]
-                                bc2_start, bc2_count = station_spec["barcode_block_2"]
-                                
-                                try:
-                                    rr_bc1 = await client.read_holding_registers(address=bc1_start, count=bc1_count)
-                                    rr_bc2 = await client.read_holding_registers(address=bc2_start, count=bc2_count)
-                                    
-                                    if not rr_bc1.isError() and not rr_bc2.isError():
-                                        station_bcA = decode_string(rr_bc1.registers)
-                                        station_bcB = decode_string(rr_bc2.registers)
-                                        
-                                        # Associate station-specific barcodes if they exist
-                                        if station_bcA or station_bcB:
-                                            vals["barcode_1"] = station_bcA
-                                            vals["barcode_2"] = station_bcB
-                                            logger.info(f"📋 Station {name} barcodes: {station_bcA}, {station_bcB}")
-                                except Exception as e:
-                                    logger.error(f"Error reading station barcodes: {e}")
-                    
-                    # Always update with latest status
+                    # If already latched, keep the timestamp/barcode even if status_1 is now 0
+                    elif prev_latched:
+                        vals["ts"] = prev_ts
+                        vals["latched"] = True
+                        if prev_barcode_1:
+                            vals["barcode_1"] = prev_barcode_1
+                        if prev_barcode_2:
+                            vals["barcode_2"] = prev_barcode_2
+                    else:
+                        # No edge, not latched: normal update
+                        if prev_ts:
+                            vals["ts"] = prev_ts
+                        vals["latched"] = False
+
                     current_set.setdefault("progress", {})[name] = vals
                 
                 # Always set current_station: if none are active, set to last known or None
