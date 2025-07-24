@@ -564,6 +564,7 @@
   "X015D": {"address": 1109, "type": "coil"},
   "X015E": {"address": 1110, "type": "coil"},
   "Y030": {"address": 2000, "type": "coil"},
+  "AUTOMANUAL":{"address": 2097, "type": "coil"},
   "Y031": {"address": 2001, "type": "coil"},
   "Y032": {"address": 2002, "type": "coil"},
   "Y033": {"address": 2003, "type": "coil"},
@@ -668,7 +669,7 @@
             "CONTROLLER_STATUS": 1001,
             "PROGRAM_STATUS": 1002,
             "ROBO_HOME":1003,
-            "ROBOHOMING":11,
+            "LCMRHOMING":11,
             "LCMR_MODE_XBOT2": { "address": 1060, "type": "holding" },
             "CONTROLLER_STATUS_XBOT2": { "address": 1061, "type": "holding" },
             "STATUS_XBOT2": { "address": 1062, "type": "holding" },
@@ -682,7 +683,7 @@
         },
         "write": {
 
-            "ROBOHOMING":[1610,9],
+            "LCMRHOMING":[1610,9],
 
             "ABORT_PROGRAM": [
                 1010,

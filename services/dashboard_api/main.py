@@ -941,7 +941,7 @@ async def consume_alarm_status_and_populate_db():
             logger.info("Started alarm status consumer for database processing")
             break
         except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError("Cannot connect alarm status consumer")
 
@@ -1047,7 +1047,7 @@ async def kafka_to_ws(stream: str, topic: str):
             logger.info(f"Started {stream} WebSocket streaming consumer")
             break
         except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError(f"Cannot connect {stream} WebSocket consumer")
 
@@ -1075,7 +1075,7 @@ async def init_kafka_producer():
             logger.info("Kafka producer initialized")
             break
         except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError("Cannot connect Kafka producer")
 
@@ -1092,7 +1092,7 @@ async def listen_for_plc_write_responses():
             await consumer.start()
             break
         except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError("Cannot start response consumer")
 
@@ -1124,7 +1124,7 @@ async def consume_set_updates():
             logger.info(f"Started consumer for individual set updates on pattern {MACHINE_STATUS_TOPIC}.set.*")
             break
         except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError("Cannot connect to Kafka for set updates")
 
@@ -1169,7 +1169,7 @@ async def consume_machine_status_and_populate_db():
             logger.info("Started machine status consumer for database processing")
             break
         except AIOKafkaNoBrokersAvailable:
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError("Cannot connect machine status consumer")
 

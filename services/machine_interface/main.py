@@ -114,7 +114,7 @@ async def init_aiokafka_producer():
             logger.warning(f"Kafka connection error ({attempt + 1}/10): {e}")
         except Exception as e:
             logger.warning(f"Kafka error ({attempt + 1}/10): {e}")
-        await asyncio.sleep(5)
+        await asyncio.sleep(0.5)
     raise RuntimeError("Kafka producer failed after 10 attempts")
 
 
@@ -635,7 +635,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 await client.connect()
             except Exception as e:
                 logger.error(f"Connection error: {e}")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
                 continue
         
         try:
@@ -851,7 +851,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
 
 
-async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=5):
+async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=0.5):
     """
     Periodically reads tags from each configured section and publishes them
     to their respective Kafka topics.
@@ -929,10 +929,10 @@ async def kafka_write_consumer_loop(client: AsyncModbusTcpClient):
             break
         except AIOKafkaNoBrokersAvailable:
             print(f"[AIOKafka Consumer] Kafka not ready for consumer. Retrying ({attempt + 1}/10)...")
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
         except Exception as e:
             print(f"[AIOKafka Consumer] Error starting consumer: {e}. Retrying ({attempt + 1}/10)...")
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError("Failed to connect to AIOKafkaConsumer after 10 attempts")
 

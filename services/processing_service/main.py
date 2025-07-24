@@ -120,7 +120,7 @@ async def init_kafka():
             break
         except NoBrokersAvailable:
             logger.warning("Kafka unavailable, retrying…")
-            await asyncio.sleep(3)
+            await asyncio.sleep(0.5)
     else:
         raise RuntimeError("Cannot connect to Kafka producer")
 
