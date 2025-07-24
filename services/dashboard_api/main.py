@@ -1196,6 +1196,8 @@ async def consume_machine_status_and_populate_db():
                                 primary_barcode = primary_barcode.replace("\x00", "")
                                 if "_" in primary_barcode:
                                     primary_barcode = primary_barcode.replace("_", "+")
+                                if "\r" in primary_barcode:
+                                    primary_barcode = primary_barcode.split("\r")[0]
                         
                         # Insert cycle if not exists
                         try:

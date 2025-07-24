@@ -186,13 +186,16 @@
 
             "G2XREFERENCE": [1330, 1],
             "G2XOPENABLE": [1330, 2],
-            "G2XJOGENABLE":[1330,7],
+         
             "G2XJOGFORWORD": [1330, 3],
             "G2XJOGREVERSE": [1330, 4],
             "G2XSTART": [1330, 5],
             "G2XSTOP": [1330, 6],
             "G2XERRORACKNOWLEDGE": [1330, 7],
 
+            "G1YJOGENABLE":[1290,8],
+            "G2YJOGENABLE":[1370,8],
+            "G2XJOGENABLE":[1330,8],
 
             "MANUALHOME":940,
             "EMERGENCY": [1610, 4],
