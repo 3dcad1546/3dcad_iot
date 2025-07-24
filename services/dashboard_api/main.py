@@ -1180,6 +1180,10 @@ async def consume_machine_status_and_populate_db():
             # Process machine status for cycle management
             if "sets" in payload:
                 for set_data in payload["sets"]:
+                    # Only process completed sets
+                    unload_status = set_data.get("progress", {}).get("unload_station", {}).get("status_1", 0)
+                    if unload_status != 1:
+                        continue  # Skip incomplete sets
                     # Extract and clean the set_id and barcodes
                     original_set_id = set_data.get("set_id", "")
                     if original_set_id:
