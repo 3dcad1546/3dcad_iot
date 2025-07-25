@@ -601,6 +601,10 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     5) Maintains proper barcode-status association
     """
     global active_sets
+    PROCESS_STATIONS = [
+    "loading_station", "xbot_1", "vision_1", "gantry_1",
+    "xbot_2", "vision_2", "gantry_2", "vision_3", "unload_station"
+]
     
     cfg = read_json_file("register_map.json")
     stations = cfg.get("stations", {})
@@ -759,16 +763,16 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 
                 # Always set current_station: if none are active, set to last known or None
                 active_station = None
-                for name, vals in current_set["progress"].items():
-                    if vals["status_1"] == 1:
+                for name in PROCESS_STATIONS:
+                    vals = current_set["progress"].get(name, {})
+                    if vals.get("status_1") == 1:
                         active_station = name
                         break
                 if active_station:
                     current_set["current_station"] = active_station
                 else:
-                    # If no station is active, keep previous or set to None
                     current_set["current_station"] = current_set.get("current_station", None)
-                
+                                
                 # 5. REAL-TIME UPDATES - PUBLISH INDIVIDUAL SET CHANGES
                 if set_updated:
                     current_set["last_update"] = now
