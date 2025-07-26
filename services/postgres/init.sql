@@ -193,6 +193,9 @@ CREATE TABLE IF NOT EXISTS cycle_event (
 CREATE TABLE IF NOT EXISTS cycle_analytics (
     id SERIAL PRIMARY KEY,
     cycle_id TEXT REFERENCES cycle_master(cycle_id),
+    operator TEXT NOT NULL,
+    variant       TEXT        NOT NULL,
+    shift_id      INTEGER     NOT NULL REFERENCES shift_master(id),
     json_data JSONB NOT NULL,
     received_ts TIMESTAMPTZ DEFAULT NOW()
 );

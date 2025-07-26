@@ -117,7 +117,10 @@
         "read": {
             "LD_CONTROLL_STATUS":{ "address": 1101, "type": "holding"},
             "LD_ACTUALSPEED": { "address": 1105, "type": "holding" },
-            "LD_CONECTION_STATUS": { "address": 1105, "type": "holding"},
+            "LD_CONECTION_STATUS": { "address": 1100, "type": "holding"},
+            "UD_CONTROLL_STATUS":{ "address": 1141, "type": "holding"},
+            "UD_ACTUALSPEED": { "address": 1145, "type": "holding" },
+            "UD_CONECTION_STATUS": { "address": 1140, "type": "holding"},
             "G1MODE": { "address": 1180, "type": "holding" },
             "G1CONTROLL_STATUS": { "address": 1181, "type": "holding" },
             "G1PROGRAM_STATUS": { "address": 1182, "type": "holding" },
@@ -213,6 +216,19 @@
                 1130,
                 2
             ],
+
+            "UD_JOGFORWORD": [
+                1170,
+                3
+            ],
+            "UD_OPENABLE": [
+                1170,
+                2
+            ],
+            "UD_INITIALIZE": [
+                1170,
+                1
+            ],
             "TARGET_POS": 2100,
             "TARGET_SPEED": 1111,
           
@@ -260,18 +276,7 @@
                 1170,
                 0
             ],
-            "INITIALIZE1": [
-                1170,
-                1
-            ],
-            "OPENABLE1": [
-                1170,
-                2
-            ],
-            "JOGFORWARD1": [
-                1170,
-                3
-            ],
+ 
             "JOGREVERSE1": [
                 1170,
                 4

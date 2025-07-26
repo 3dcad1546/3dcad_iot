@@ -644,6 +644,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
         
         try:
             now = time.strftime("%Y-%m-%dT%H:%M:%S")
+            # print(now,"")
             
             # 1. READ ALL STATUS REGISTERS IN ONE BATCH
             rr_status = await client.read_holding_registers(address=min_reg, count=status_count)
@@ -828,7 +829,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             logger.error(f"Error in read_specific_plc_data: {e}", exc_info=True)
         
         # Higher frequency for more responsive updates
-        await asyncio.sleep(0.1)  # 10Hz update rate
+        await asyncio.sleep(0.01)  # 10Hz update rate
 
 
 
