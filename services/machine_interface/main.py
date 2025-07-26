@@ -747,6 +747,12 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                         # (barcode reading logic here, as in your code)
                         set_updated = True
                     # If already latched, keep the timestamp/barcode even if status_1 is now 0
+                        reg1, bit1 = stations[name]["status_1"]
+                        rr = await client.read_holding_registers(address=reg1, count=1)
+                        if not rr.isError() and rr.registers:
+                            current = rr.registers[0]
+                            new = current & ~(1 << bit1)  # Clear the bit
+                            await client.write_register(reg1, new)
                     elif prev_latched:
                         vals["ts"] = prev_ts
                         vals["latched"] = True

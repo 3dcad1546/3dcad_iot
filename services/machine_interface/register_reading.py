@@ -3,7 +3,7 @@ import json
 import asyncio
 from pymodbus.client.tcp import AsyncModbusTcpClient
 
-REGISTER_MAP_PATH = "register_map.json"  # Adjust path if needed
+REGISTER_MAP_PATH = "register_map.json"
 PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
 PLC_PORT = int(os.getenv("PLC_PORT", "502"))
 
@@ -22,18 +22,33 @@ async def main():
         return
 
     print(f"Connected to PLC at {PLC_HOST}:{PLC_PORT}")
-    print("Reading all station status registers...\n")
-    while True:
-        for name, spec in stations.items():
-            reg1, bit1 = spec["status_1"]
-            reg2, bit2 = spec["status_2"]
-            rr1 = await client.read_holding_registers(address=reg1, count=1)
-            rr2 = await client.read_holding_registers(address=reg2, count=1)
-            v1 = (rr1.registers[0] >> bit1) & 1 if not rr1.isError() and rr1.registers else None
-            v2 = (rr2.registers[0] >> bit2) & 1 if not rr2.isError() and rr2.registers else None
-            print(f"{name:20s} | status_1: reg={reg1}, bit={bit1} → {v1} | status_2: reg={reg2}, bit={bit2} → {v2}")
+    print("Polling station status registers with handshake...\n")
 
-    await client.close()
+    # Track previous status for edge detection
+    previous_status = {name: 0 for name in stations.keys()}
+
+    try:
+        while True:
+            for name, spec in stations.items():
+                reg1, bit1 = spec["status_1"]
+                rr1 = await client.read_holding_registers(address=reg1, count=1)
+                v1 = (rr1.registers[0] >> bit1) & 1 if not rr1.isError() and rr1.registers else None
+
+                # Rising edge detection and handshake
+                if previous_status[name] == 0 and v1 == 1:
+                    print(f"[EVENT] {name:20s} | status_1: reg={reg1}, bit={bit1} → {v1} (resetting bit)")
+                    # Reset the bit to 0 after reading
+                    current = rr1.registers[0]
+                    new = current & ~(1 << bit1)
+                    await client.write_register(reg1, new)
+                else:
+                    print(f"{name:20s} | status_1: reg={reg1}, bit={bit1} → {v1}")
+
+                previous_status[name] = v1
+
+            await asyncio.sleep(0.02)  # Poll every 50ms (adjust as needed)
+    finally:
+        await client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
