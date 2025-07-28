@@ -125,7 +125,6 @@
             "G1CONTROLL_STATUS": { "address": 1181, "type": "holding" },
             "G1PROGRAM_STATUS": { "address": 1182, "type": "holding" },
             "G1ACTUAL_SPEED": { "address": 1183, "type": "holding" },
-            "MANUALHOME":{ "address": 940,"type": "coil" },
              "G1YMODE": { "address": 1260, "type": "holding" },
             "G1YCONTROLL_STATUS": { "address": 1261, "type": "holding" },
             "G1YPROGRAM_STATUS": { "address": 1262, "type": "holding" },
@@ -200,7 +199,7 @@
             "G2YJOGENABLE":[1370,8],
             "G2XJOGENABLE":[1330,8],
 
-            "MANUALHOME":[1610,8],
+            "MANUALHOME":[1610,9],
 
             "EMERGENCY": [1610,4],
             "MANUAL": [1610,1],
@@ -457,6 +456,7 @@
 
     "io": {
         "read": {
+    "MANUALHOME":{ "address": 940,"type": "coil" },
   "X020": {"address": 1000, "type": "coil"},
   "X021": {"address": 1001, "type": "coil"},
   "X022": {"address": 1002, "type": "coil"},

@@ -1,10 +1,11 @@
 import asyncio
 import struct
-from pymodbus.client.async_tcp import AsyncModbusTcpClient
+# from pymodbus.client.async_tcp import AsyncModbusTcpClient
+from pymodbus.client.tcp import AsyncModbusTcpClient
 
-async def read_float_async(client, base_addr, reverse=False, unit=1):
+async def read_float_async(client, base_address, reverse=False, unit=1):
     # Read two 16-bit registers (32 bits)
-    result = await client.read_holding_registers(address=base_addr, count=2, unit=unit)
+    result = await client.read_holding_registers(address=base_address, count=2)
     if result.isError():
         raise Exception(f"Modbus read error: {result}")
 
@@ -21,16 +22,16 @@ async def read_float_async(client, base_addr, reverse=False, unit=1):
     return value
 
 async def main():
-    client = AsyncModbusTcpClient('192.168.0.10', port=502)
+    client = AsyncModbusTcpClient('192.168.10.3', port=502)
     await client.connect()
 
     try:
         # Example: high word is at address 1004, low word at 1003
-        base_address = 1003
+        base_address = 1263
         float_value = await read_float_async(client, base_address, reverse=True)
         print(f"Float Value: {float_value}")
     finally:
-        await client.close()
+         client.close()
 
 # Run the async main function
 asyncio.run(main())
