@@ -856,6 +856,20 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             removed_count = before_count - len(active_sets)
             
             if removed_count > 0:
+                unload = stations["unload_station"]
+                reg1, bit1 = unload["status_1"]
+                reg2, bit2 = unload["status_2"]
+                rr1 = await client.read_holding_registers(address=reg1, count=1)
+                if not rr1.isError() and rr1.registers:
+                    current = rr1.registers[0]
+                    new = current & ~(1 << bit1)
+                    await client.write_register(reg1, new)
+                rr2 = await client.read_holding_registers(address=reg2, count=1)
+                if not rr2.isError() and rr2.registers:
+                    current = rr2.registers[0]
+                    new = current & ~(1 << bit2)
+                    await client.write_register(reg2, new)
+                logger.info("Cleared unload_station status_1 and status_2 bits after retirement.")
                 logger.info(f"Retired {removed_count} completed sets")
                 any_set_updated = True
             
