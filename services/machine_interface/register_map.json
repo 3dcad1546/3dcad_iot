@@ -712,12 +712,13 @@
             "LCMR_MODE_XBOT2": { "address": 1060, "type": "holding" },
             "CONTROLLER_STATUS_XBOT2": { "address": 1061, "type": "holding" },
             "STATUS_XBOT2": { "address": 1062, "type": "holding" },
-            "ACTUAL_POS_XBOT2": { "address": 1063, "type": "holding" },
+            "ACTUAL_POS_XBOT2": { "address": 1063, "datatype": "float", "count": 2, "reverse": true},
             "RUNNIG_PROGRAM_NUMBER_XBOT2": { "address": 1065, "type": "holding" },
             "LCMR_MODE_XBOT1": { "address": 1020, "type": "holding" },
             "CONTROLLER_STATUS_XBOT1": { "address": 1021, "type": "holding" },
             "STATUS_XBOT1": { "address": 1022, "type": "holding" },
-            "ACTUAL_POS_XBOT1": { "address": 1023, "type": "holding" }
+            "ACTUAL_POS_XBOT1": { "address": 1023, "datatype": "float", "count": 2, "reverse": true }
+          
 
         },
         "write": {
