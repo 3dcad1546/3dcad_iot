@@ -604,7 +604,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     PROCESS_STATIONS = [
     "loading_station", "xbot_1", "vision_1", "gantry_1",
     "xbot_2", "vision_2", "gantry_2", "vision_3", "unload_station"
-]
+    ]
     
     cfg = read_json_file("register_map.json")
     stations = cfg.get("stations", {})
@@ -689,44 +689,63 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 changes = station_changes["loading_station"]
                 # Rising edge detection (0->1) for status_1
                 if changes["status_1"].get("old") == 0 and changes["status_1"].get("new") == 1:
-                    logger.info("🔄 Loading station activated - checking for new barcode")
-                    
-                    # Read barcodes associated with loading station
+                    # Only read barcode 1
                     ld = stations["loading_station"]
                     bc1_start, bc1_count = ld["barcode_block_1"]
-                    bc2_start, bc2_count = ld["barcode_block_2"]
-                    
                     rr_bc1 = await client.read_holding_registers(address=bc1_start, count=bc1_count)
+                    bcA = decode_string(rr_bc1.registers) if not rr_bc1.isError() else ""
+                    set_id = f"{bcA}|"
+                    if bcA and set_id not in seen_barcodes:
+                        # ... create set with only bcA ...
+                        new_set = {
+                            "set_id": set_id,
+                            "barcodes": [bcA],
+                            "progress": {},
+                            "created_ts": now,
+                            "last_update": now,
+                            "current_station": "loading_station"
+                        }
+                        active_sets.append(new_set)
+                        seen_barcodes.add(set_id)
+                    else:
+                        logger.warning(f"⚠️ Skipping duplicate or empty barcode set: {set_id}")
+                    ld = stations["loading_station"]
+                    reg1, bit1 = ld["status_1"]
+                    rr = await client.read_holding_registers(address=reg1, count=1)
+                    if not rr.isError() and rr.registers:
+                        current = rr.registers[0]
+                        new = current & ~(1 << bit1)  # Clear the bit
+                        await client.write_register(reg1, new)
+
+                if changes["status_2"].get("old") == 0 and changes["status_2"].get("new") == 1:
+                    # Only read barcode 2
+                    ld = stations["loading_station"]
+                    bc2_start, bc2_count = ld["barcode_block_2"]
                     rr_bc2 = await client.read_holding_registers(address=bc2_start, count=bc2_count)
+                    bcB = decode_string(rr_bc2.registers) if not rr_bc2.isError() else ""
+                    set_id = f"|{bcB}"
+                    if bcB and set_id not in seen_barcodes:
+                        # ... create set with only bcB ...
+                        new_set = {
+                            "set_id": set_id,
+                            "barcodes": [bcB],
+                            "progress": {},
+                            "created_ts": now,
+                            "last_update": now,
+                            "current_station": "loading_station"
+                        }
+                        active_sets.append(new_set)
+                        seen_barcodes.add(set_id)
+                    else:
+                        logger.warning(f"⚠️ Skipping duplicate or empty barcode set: {set_id}")
+                    ld = stations["loading_station"]
+                    reg2, bit2 = ld["status_2"]
+                    rr = await client.read_holding_registers(address=reg2, count=1)
+                    if not rr.isError() and rr.registers:
+                        current = rr.registers[0]
+                        new = current & ~(1 << bit2)  # Clear the bit
+                        await client.write_register(reg2, new)
                     
-                    if not rr_bc1.isError() and not rr_bc2.isError():
-                        bcA = decode_string(rr_bc1.registers)
-                        bcB = decode_string(rr_bc2.registers)
-                        
-                        # Create a new set only if we have valid barcodes and haven't seen them
-                        set_id = f"{bcA}|{bcB}"
-                        if (bcA or bcB) and set_id not in seen_barcodes:
-                            logger.info(f"🆕 New set detected with barcodes: {bcA}, {bcB}")
-                            
-                            # Add to tracking
-                            new_set = {
-                                "set_id": set_id,
-                                "barcodes": [bcA, bcB],
-                                "progress": {},
-                                "created_ts": now,
-                                "last_update": now,
-                                "current_station": "loading_station"
-                            }
-                            active_sets.append(new_set)
-                            seen_barcodes.add(set_id)
-                            
-                            # Limit active sets to most recent 3
-                            if len(active_sets) > 3:
-                                removed = active_sets.pop(0)
-                                logger.info(f"⚠️ Removed oldest set {removed['set_id']} (limit: 3)")
-                        else:
-                            logger.warning(f"⚠️ Skipping duplicate or empty barcode set: {set_id}")
-            
             # 4. UPDATE ALL ACTIVE SETS WITH CURRENT STATION STATUSES
             any_set_updated = False
             
@@ -741,7 +760,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     prev_latched = prev.get("latched", False)
 
                     # Rising edge: latch and record timestamp/barcode
-                    if prev_status_1 == 0 and vals["status_1"] == 1:
+                    if vals["status_1"] == 1:
                         vals["ts"] = now
                         vals["latched"] = True
                         # (barcode reading logic here, as in your code)
@@ -753,6 +772,16 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                             current = rr.registers[0]
                             new = current & ~(1 << bit1)  # Clear the bit
                             await client.write_register(reg1, new)
+                    if vals["status_2"] == 1:
+                        vals["ts_2"] = now
+                        vals["latched_2"] = True
+                        set_updated = True
+                        reg2, bit2 = stations[name]["status_2"]
+                        rr = await client.read_holding_registers(address=reg2, count=1)
+                        if not rr.isError() and rr.registers:
+                            current = rr.registers[0]
+                            new = current & ~(1 << bit2)  # Clear the bit
+                            await client.write_register(reg2, new)
                     elif prev_latched:
                         vals["ts"] = prev_ts
                         vals["latched"] = True
@@ -772,7 +801,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 active_station = None
                 for name in PROCESS_STATIONS:
                     vals = current_set["progress"].get(name, {})
-                    if vals.get("status_1") == 1:
+                    if vals.get("status_1") == 1 or vals.get("status_2") == 1:
                         active_station = name
                         break
                 if active_station:
@@ -822,6 +851,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             active_sets = [
                 st for st in active_sets
                 if st["progress"].get("unload_station", {}).get("status_1") != 1
+                and st["progress"].get("unload_station", {}).get("status_2") != 1
             ]
             removed_count = before_count - len(active_sets)
             
