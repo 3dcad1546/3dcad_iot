@@ -12,8 +12,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ─── Toggle Simulation Mode ─────────────────────────────────────
 USE_SIMULATOR = os.getenv("USE_SIMULATOR", "false").lower() in ("1", "true", "yes")
 
+
+
 # In-memory tracking of all “in-flight” barcode-sets:
 active_sets: list = []
+pending_load = { 'bcA': None, 'bcB': None }
 
 # Simple guard to only spawn one new set per rising edge of the two global flags
 _load_seen = False
@@ -237,6 +240,8 @@ def read_json_file(file_path):
         print(f"An unexpected error occurred while reading '{file_path}': {e}")
         return None
 
+REGISTER_MAP = read_json_file("register_map.json")
+
 async def read_float_async(client, base_address, reverse=False, unit=1):
     # Read two 16-bit registers (32 bits)
     result = await client.read_holding_registers(address=base_address, count=2, slave=unit)
@@ -261,7 +266,7 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
         logging.info(f"Warning: Modbus client not connected when trying to read section '{section}'.")
         return out
 
-    config_data = read_json_file("register_map.json")
+    config_data = REGISTER_MAP
     if not config_data:
         logging.info("Error: Could not read register map configuration.")
         return out
@@ -276,6 +281,8 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
 
     for name, cfg in section_data.items():
         # normalize to dict form
+        dataType = None
+        reverse  = False
         if isinstance(cfg, dict):
             addr     = cfg["address"]
             typ      = cfg.get("type","holding")
@@ -284,54 +291,35 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
             reverse  = cfg.get("reverse", False)
         elif isinstance(cfg, list) and len(cfg)==2:
             addr, count = cfg
-            typ = "holding"
+            typ         = "holding"
         elif isinstance(cfg, int):
             addr, count, typ = cfg, 1, "holding"
         else:
-            print(f"Skipping bad config for {name}: {cfg}")
+            logger.warning(f"Skipping bad config for {name}: {cfg}")
             continue
+
         try:
+            # 1) Coils
             if typ == "coil":
                 rr = await client.read_coils(address=addr, count=count, slave=1)
                 val = rr.bits[0] if not rr.isError() and rr.bits else None
+
+            # 2) Explicit floats (32-bit)
+            elif dataType == "float" and count == 2:
+                val = await read_float_async(client, addr, reverse=reverse, unit=1)
+            # 3) Everything else is a standard 1- or N-word register
             else:
-                rr = await client.read_holding_registers(address=addr, count=count)
-                print("Raw register response:", rr)
-
+                rr = await client.read_holding_registers(address=addr, count=count, slave=1)
+                logger.debug(f"Raw registers for {name}@{addr}: {rr.registers}")
                 if rr.isError() or not rr.registers:
-                    print(f"Error reading holding {name}@{addr}: Empty or Error")
                     val = None
-
-                elif len(rr.registers) == 2:
-                    # Combine two 16-bit registers into one 32-bit float
-                    try:
-                        # Pack the two registers into a byte array
-                        packed_data = struct.pack('>HH',  rr.registers[1],rr.registers[0])
-                        # Unpack the byte array as a single float
-                        val = struct.unpack('>f', packed_data)[0]
-                        print(f"Decoded float value: {val}")
-                    except Exception as e:
-                        print(f"Error decoding float for {name}: {e}")
-                        val = rr.registers  # Fallback: return raw registers
-                elif dataType == "float" and count == 2:
-                    val = await read_float_async(client, addr, reverse=reverse)
-                elif len(rr.registers) > 2:
-                    try:
-                        decoder = BinaryPayloadDecoder.fromRegisters(
-                            rr.registers, 
-                            byteorder=Endian.Big, 
-                            wordorder=Endian.Big
-                        )
-                        val = decoder.decode_string(len(rr.registers) * 2).rstrip('\x00')
-                    except Exception as e:
-                        print(f"Error decoding string for {name}: {e}")
-                        val = rr.registers  # Fallback
-
-                else:  # Single register
+                elif count == 1:
                     val = rr.registers[0]
+                else:
+                    val = rr.registers
 
             out[name] = val
-            print(out[name], "out[name]")
+            logger.debug(f"→ {name} = {val}")
 
 
 
@@ -372,7 +360,7 @@ async def async_write_tags(client: AsyncModbusTcpClient, section: str, tags: dic
         print(f"Warning: Modbus client not connected when trying to write to section '{section}'.")
         return
 
-    config_data = read_json_file("register_map.json")
+    config_data = REGISTER_MAP
     if not config_data:
         response_payload["message"] = "Could not read register map for writing."
         if aio_producer:
@@ -494,6 +482,8 @@ def sanitize_topic_name(topic_base, identifier):
     
     return full_topic
 
+
+    
 async def read_specific_plc_data(client: AsyncModbusTcpClient):
     """
     Advanced workpiece tracking system that:
@@ -503,13 +493,13 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     4) Publishes real-time updates for status changes
     5) Maintains proper barcode-status association
     """
-    global active_sets
+    global active_sets,pending_load
     PROCESS_STATIONS = [
     "loading_station", "xbot_1", "vision_1", "gantry_1",
     "xbot_2", "vision_2", "gantry_2", "vision_3", "unload_station"
     ]
     
-    cfg = read_json_file("register_map.json")
+    cfg = REGISTER_MAP
     stations = cfg.get("stations", {})
     
     # Keep track of previous station statuses for edge detection
@@ -590,6 +580,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             # 3. CHECK FOR LOADING STATION ACTIVATION (RISING EDGE)
             if "loading_station" in station_changes:
                 changes = station_changes["loading_station"]
+                
                 # Rising edge detection (0->1) for status_1
                 if changes["status_1"].get("old") == 0 and changes["status_1"].get("new") == 1:
                     # Only read barcode 1
@@ -597,21 +588,22 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     bc1_start, bc1_count = ld["barcode_block_1"]
                     rr_bc1 = await client.read_holding_registers(address=bc1_start, count=bc1_count)
                     bcA = decode_string(rr_bc1.registers) if not rr_bc1.isError() else ""
-                    set_id = f"{bcA}|"
-                    if bcA and set_id not in seen_barcodes:
-                        # ... create set with only bcA ...
-                        new_set = {
-                            "set_id": set_id,
-                            "barcodes": [bcA],
-                            "progress": {},
-                            "created_ts": now,
-                            "last_update": now,
-                            "current_station": "loading_station"
-                        }
-                        active_sets.append(new_set)
-                        seen_barcodes.add(set_id)
-                    else:
-                        logger.warning(f"⚠️ Skipping duplicate or empty barcode set: {set_id}")
+                    pending_load['bcA'] = bcA
+                    # set_id = f"{bcA}|"
+                    # if bcA and set_id not in seen_barcodes:
+                    #     # ... create set with only bcA ...
+                    #     new_set = {
+                    #         "set_id": set_id,
+                    #         "barcodes": [bcA],
+                    #         "progress": {},
+                    #         "created_ts": now,
+                    #         "last_update": now,
+                    #         "current_station": "loading_station"
+                    #     }
+                    #     active_sets.append(new_set)
+                    #     seen_barcodes.add(set_id)
+                    # else:
+                    #     logger.warning(f"⚠️ Skipping duplicate or empty barcode set: {set_id}")
                     ld = stations["loading_station"]
                     reg1, bit1 = ld["status_1"]
                     rr = await client.read_holding_registers(address=reg1, count=1)
@@ -626,21 +618,21 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     bc2_start, bc2_count = ld["barcode_block_2"]
                     rr_bc2 = await client.read_holding_registers(address=bc2_start, count=bc2_count)
                     bcB = decode_string(rr_bc2.registers) if not rr_bc2.isError() else ""
-                    set_id = f"|{bcB}"
-                    if bcB and set_id not in seen_barcodes:
-                        # ... create set with only bcB ...
-                        new_set = {
-                            "set_id": set_id,
-                            "barcodes": [bcB],
-                            "progress": {},
-                            "created_ts": now,
-                            "last_update": now,
-                            "current_station": "loading_station"
-                        }
-                        active_sets.append(new_set)
-                        seen_barcodes.add(set_id)
-                    else:
-                        logger.warning(f"⚠️ Skipping duplicate or empty barcode set: {set_id}")
+                    pending_load['bcB'] = bcB
+                    # if bcB and set_id not in seen_barcodes:
+                    #     # ... create set with only bcB ...
+                    #     new_set = {
+                    #         "set_id": set_id,
+                    #         "barcodes": [bcB],
+                    #         "progress": {},
+                    #         "created_ts": now,
+                    #         "last_update": now,
+                    #         "current_station": "loading_station"
+                    #     }
+                    #     active_sets.append(new_set)
+                    #     seen_barcodes.add(set_id)
+                    # else:
+                    #     logger.warning(f"⚠️ Skipping duplicate or empty barcode set: {set_id}")
                     ld = stations["loading_station"]
                     reg2, bit2 = ld["status_2"]
                     rr = await client.read_holding_registers(address=reg2, count=1)
@@ -648,7 +640,23 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                         current = rr.registers[0]
                         new = current & ~(1 << bit2)  # Clear the bit
                         await client.write_register(reg2, new)
-                    
+                if pending_load['bcA'] and pending_load['bcB']:
+                    full_id = f"{pending_load['bcA']}|{pending_load['bcB']}"
+                    if full_id in seen_barcodes:
+                        logger.debug(f"Skipping duplicate set {full_id}")
+                    else:
+                        active_sets.append({
+                        "set_id": full_id,
+                        "barcodes": [pending_load['bcA'], pending_load['bcB']],
+                        "progress": {},
+                        "created_ts": now,
+                        "last_update": now,
+                        "current_station": None
+                        })
+                        seen_barcodes.add(full_id)
+                        logger.info(f"📦 New set created: {full_id}")
+                    # clear the buffer
+                    pending_load['bcA'] = pending_load['bcB'] = None    
             # 4. UPDATE ALL ACTIVE SETS WITH CURRENT STATION STATUSES
             any_set_updated = False
             

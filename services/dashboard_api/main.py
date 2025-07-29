@@ -1145,9 +1145,10 @@ async def websocket_machine_status(websocket: WebSocket):
         await consumer.stop()
         
         # Stay connected for ongoing messages
-        while True:
-            data = await websocket.receive_text()
-            await websocket.send_json({"type": "ack", "message": "received"})
+        await asyncio.Future() 
+        # while True:
+        #     data = await websocket.receive_text()
+        #     await websocket.send_json({"type": "ack", "message": "received"})
             
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected from machine-status")
