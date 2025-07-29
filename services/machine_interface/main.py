@@ -49,7 +49,7 @@ KAFKA_TOPIC_AUTO_STATUS = os.getenv("AUTO_STATUS_TOPIC", "auto_status")
 KAFKA_TOPIC_ROBO_STATUS = os.getenv("ROBO_STATUS_TOPIC", "robo_status")
 KAFKA_TOPIC_IO_STATUS = os.getenv("IO_STATUS_TOPIC", "io_status")
 KAFKA_TOPIC_ALARM_STATUS = os.getenv("ALARM_STATUS_TOPIC", "alarm_status")
-KAFKA_TOPIC_OEE_STATUS = os.getenv("OEE_STATUS_TOPIC", "oee_status") # New topic for OEE data
+KAFKA_TOPIC_OEE_STATUS = os.getenv("OEE_STATUS_TOPIC", "oee_status") 
 KAFKA_TOPIC_ON_OFF_STATUS = os.getenv("ON_OFF_TOPIC", "on_off_status")
 
 # Barcode related registers (No change)
@@ -237,6 +237,20 @@ def read_json_file(file_path):
         print(f"An unexpected error occurred while reading '{file_path}': {e}")
         return None
 
+async def read_float_async(client, base_address, reverse=False, unit=1):
+    # Read two 16-bit registers (32 bits)
+    result = await client.read_holding_registers(address=base_address, count=2, slave=unit)
+    if result.isError():
+        raise Exception(f"Modbus read error: {result}")
+    regs = result.registers
+    # print(f"Raw registers: {regs}")
+
+    if reverse:
+        regs = [regs[1], regs[0]]
+
+    raw_bytes = struct.pack('>HH', *regs)
+    return struct.unpack('>f', raw_bytes)[0]
+
 async def read_tags_async(client: AsyncModbusTcpClient, section: str):
     """
     Reads tags from a specified section in the register map.
@@ -263,9 +277,11 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
     for name, cfg in section_data.items():
         # normalize to dict form
         if isinstance(cfg, dict):
-            addr  = cfg["address"]
-            typ   = cfg.get("type","holding")
-            count = cfg.get("count", 1)
+            addr     = cfg["address"]
+            typ      = cfg.get("type","holding")
+            count    = cfg.get("count", 1)
+            dataType = cfg.get("datatype", None)
+            reverse  = cfg.get("reverse", False)
         elif isinstance(cfg, list) and len(cfg)==2:
             addr, count = cfg
             typ = "holding"
@@ -274,10 +290,6 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
         else:
             print(f"Skipping bad config for {name}: {cfg}")
             continue
-
-      
-
-
         try:
             if typ == "coil":
                 rr = await client.read_coils(address=addr, count=count, slave=1)
@@ -301,7 +313,8 @@ async def read_tags_async(client: AsyncModbusTcpClient, section: str):
                     except Exception as e:
                         print(f"Error decoding float for {name}: {e}")
                         val = rr.registers  # Fallback: return raw registers
-
+                elif dataType == "float" and count == 2:
+                    val = await read_float_async(client, addr, reverse=reverse)
                 elif len(rr.registers) > 2:
                     try:
                         decoder = BinaryPayloadDecoder.fromRegisters(
@@ -460,117 +473,7 @@ def decode_string(words):
     raw_bytes = b''.join([(w & 0xFF).to_bytes(1, 'little') + ((w >> 8) & 0xFF).to_bytes(1, 'little') for w in words])
     return raw_bytes.decode("ascii", errors="ignore").rstrip("\x00")
 
-# ─── Main PLC Data Reading and Publishing Loops ──────────────────────────────────
-
-# async def read_specific_plc_data(client: AsyncModbusTcpClient):
-#     """
-#     1) Watch the two global barcode flags (3303, 3304). When they BOTH
-#        go from 0→1, read the loading_station’s two barcode blocks,
-#        form a new set, and append to active_sets.
-#     2) Every cycle, read status_1/2 for _every_ station and attach to each
-#        active set’s .progress[name] = {status_1, status_2, ts}.
-#     3) Publish the full active_sets list as one payload.
-#     4) Retire a set once its unload_station status_1 goes high.
-#     """
-#     global _load_seen, active_sets
-
-#     cfg      = read_json_file("register_map.json")
-#     stations = cfg.get("stations", {})
-    
-    
-#     # Limit read size to reasonable chunk (Modbus protocol typically limits to 125 registers)
-#     if read_count > 125:
-#         logger.warning(f"Register range too large ({read_count}), using multiple batch reads")
-#         use_multiple_batches = True
-#     else:
-#         use_multiple_batches = False
-    
-#     while True:
-#         async def read_bit(reg, bit):
-#             rr = await client.read_holding_registers(address=reg, count=1)
-#             return 0 if rr.isError() or not rr.registers else (rr.registers[0] >> bit) & 1
-#         # 0) ensure PLC connection
-#         if not client.connected:
-#             logger.warning("❌ PLC not connected—reconnecting…")
-#             try:
-#                 await client.connect()
-#             except:
-#                 await asyncio.sleep(2)
-#                 continue
-#             if not client.connected:
-#                 await asyncio.sleep(2)
-#                 continue
-
-#         now = time.strftime("%Y-%m-%dT%H:%M:%S")
-
-#         # 1) Read global barcode_flags
-#         try:
-#             rr1 = await client.read_holding_registers(address=BARCODE_FLAG_1, count=1)
-#             rr2 = await client.read_holding_registers(address=BARCODE_FLAG_2, count=1)
-#             flag1 = bool(rr1.registers[0]) if not rr1.isError() else False
-#             flag2 = bool(rr2.registers[0]) if not rr2.isError() else False
-#         except:
-#             flag1 = flag2 = False
-
-#         flag1 = flag2 = True
-#         # 2) On rising edge of both flags → spawn a new set
-#         if flag1 and flag2 and not _load_seen:
-#             # read the two barcodes from your loading_station
-#             ld = stations["loading_station"]
-#             bcA = decode_string((await client.read_holding_registers(address=ld["barcode_block_1"][0], count=ld["barcode_block_1"][1])).registers)
-#             print(bcA,"bcAbcA")
-#             bcB = decode_string((await client.read_holding_registers(address=ld["barcode_block_2"][0], count=ld["barcode_block_2"][1])).registers)
-#             set_id = f"{bcA}|{bcB}"
-#             print(set_id,"setttt")
-#             if bcA or bcB:  # At least one valid barcode
-#                 set_id = f"{bcA}|{bcB}"
-#                 print(f"Creating new set with ID: {set_id}")
-#                 active_sets.append({
-#                     "set_id":     set_id,
-#                     "barcodes":   [bcA, bcB],
-#                     "progress":   {},         
-#                     "created_ts": now
-#                 })
-#             else:
-#                 print("WARNING: Skipping set creation due to empty barcodes")
-#         #     await client.write_register(BARCODE_FLAG_1, 0)
-#         #     await client.write_register(BARCODE_FLAG_2, 0)
-#         #     _load_seen = True
-
-#         # # once both flags drop, allow next rising edge:
-#         # if not (flag1 or flag2):
-#             _load_seen = False
-
-#         # 3) Read each station’s status_1/2 once per cycle
-        
-
-#         station_vals = {}
-#         for name, spec in stations.items():
-#             v1 = await read_bit(*spec["status_1"])
-#             v2 = await read_bit(*spec["status_2"])
-#             station_vals[name] = {"status_1": v1, "status_2": v2, "ts": now}
-
-#         # 4) Attach those readings to every active set
-#         for st in active_sets:
-#             for name, vals in station_vals.items():
-#                 st["progress"][name] = vals
-
-#         # 5) Retire any set that’s done at unload_station
-#         active_sets = [
-#             st for st in active_sets
-#             if st["progress"].get("unload_station", {}).get("status_1") != 1
-#         ]
-
-#         # 6) Publish the whole list in one shot
-#         payload = {"sets": active_sets, "ts": now}
-#         if aio_producer:
-#             await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=payload)
-#             logger.info(f"Published {len(active_sets)} active sets")
-#         else:
-#             logger.error("Kafka producer not ready; dropped machine_status")
-
-#         await asyncio.sleep(1)
-
+# ─
 def sanitize_topic_name(topic_base, identifier):
     """
     Sanitizes a string to be used as part of a Kafka topic name.
@@ -860,12 +763,12 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 reg1, bit1 = unload["status_1"]
                 reg2, bit2 = unload["status_2"]
                 rr1 = await client.read_holding_registers(address=reg1, count=1)
-                if not rr1.isError() and rr1.registers:
+                if not rr1.isError() and rr1.registers and ((rr1.registers[0] >> bit1) & 1):
                     current = rr1.registers[0]
                     new = current & ~(1 << bit1)
                     await client.write_register(reg1, new)
                 rr2 = await client.read_holding_registers(address=reg2, count=1)
-                if not rr2.isError() and rr2.registers:
+                if not rr2.isError() and rr2.registers and ((rr2.registers[0] >> bit2) & 1):
                     current = rr2.registers[0]
                     new = current & ~(1 << bit2)
                     await client.write_register(reg2, new)

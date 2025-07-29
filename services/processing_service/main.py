@@ -271,6 +271,7 @@ async def process_event(topic: str, msg: dict) -> dict:
         },
         "request_id": cycle_id
     }
+    cmds.append(plc_cmd)
     await publish_cycle_event(cycle_id, "PLCWrite")
     return {"commands": cmds}
 
