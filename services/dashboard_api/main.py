@@ -603,8 +603,8 @@ async def receive_analytics(data: Dict):
         
         # Store the analytics data
         cur.execute(
-            "INSERT INTO cycle_analytics(json_data, operator, shift_id, variant) VALUES(%s, %s, %s, %s) RETURNING id",
-            (json.dumps(data), "system", 1, "default")
+            "INSERT INTO cycle_analytics(json_data, operator, shift_id, variant, barcode) VALUES(%s, %s, %s, %s, %s) RETURNING id",
+            (json.dumps(data), "system", 1, "default", barcode)
         )
        
         analytics_id = cur.fetchone()["id"]

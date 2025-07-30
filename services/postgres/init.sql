@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS cycle_analytics (
     cycle_id TEXT REFERENCES cycle_master(cycle_id),
     operator TEXT NOT NULL,
     variant       TEXT        NOT NULL,
+    barcode       TEXT        ,
     shift_id      INTEGER     NOT NULL REFERENCES shift_master(id),
     json_data JSONB NOT NULL,
     received_ts TIMESTAMPTZ DEFAULT NOW()
