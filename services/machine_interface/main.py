@@ -665,13 +665,14 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 for name, vals in station_vals.items():
                     prev = current_set.get("progress", {}).get(name, {})
                     prev_status_1 = prev.get("status_1", 0)
+                    prev_status_2 = prev.get("status_2", 0)
                     prev_ts = prev.get("ts", None)
                     prev_barcode_1 = prev.get("barcode_1", None)
                     prev_barcode_2 = prev.get("barcode_2", None)
                     prev_latched = prev.get("latched", False)
 
                     # Rising edge: latch and record timestamp/barcode
-                    if vals["status_1"] == 1:
+                    if vals["status_1"] == 1 and prev_status_1==0:
                         vals["ts"] = now
                         vals["latched"] = True
                         # (barcode reading logic here, as in your code)
@@ -683,7 +684,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                             current = rr.registers[0]
                             new = current & ~(1 << bit1)  # Clear the bit
                             await client.write_register(reg1, new)
-                    if vals["status_2"] == 1:
+                    if vals["status_2"] == 1 and prev_status_2==0:
                         vals["ts_2"] = now
                         vals["latched_2"] = True
                         set_updated = True
@@ -790,7 +791,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             logger.error(f"Error in read_specific_plc_data: {e}", exc_info=True)
         
         # Higher frequency for more responsive updates
-        await asyncio.sleep(0.01)  # 10Hz update rate
+        await asyncio.sleep(0.05)  # 10Hz update rate
 
 
 

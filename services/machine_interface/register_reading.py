@@ -46,7 +46,7 @@ async def main():
 
                 previous_status[name] = v1
 
-            await asyncio.sleep(0.02)  # Poll every 50ms (adjust as needed)
+            await asyncio.sleep(0.5)  # Poll every 50ms (adjust as needed)
     finally:
         await client.close()
 
