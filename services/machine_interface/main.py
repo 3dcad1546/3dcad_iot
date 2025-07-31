@@ -671,9 +671,14 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
         # 6) Periodic full update
         full_payload = {"type": "full_update", "sets": active_sets, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}
-        if aio_producer:
+        if active_sets and aio_producer:
+            full_payload = {
+                "type": "full_update",
+                "sets": active_sets,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S")
+            }
             await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=full_payload)
-
+ 
         # 7) Repopulate previous_station_statuses for the *next* cycle
         previous_station_statuses = current_statuses
 
