@@ -198,8 +198,8 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
         # D) Publish if updates…
         if any_update:
             for s in active_sets:
-                print(value={"type":"set_update","set_id":s["set_id"],"current_station":s["current_station"],"ts":now})
-            print(value={"type":"full_update","sets":active_sets,"ts":now})
+                print({"type":"set_update","set_id":s["set_id"],"current_station":s["current_station"],"ts":now})
+            print({"type":"full_update","sets":active_sets,"ts":now})
 
         # E) Retire on unload edges…
         completed = [
@@ -216,8 +216,8 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                     val = rr.registers[0]
                     await client.write_register(addr, val & ~(1<<bit))
             active_sets[:] = [s for s in active_sets if s["set_id"] not in completed]
-            seen -= set(completed)
-            print(value={"type":"full_update","sets":active_sets,"ts":now})
+            seen -= set(completed) 
+            print({"type":"full_update","sets":active_sets,"ts":now})
 
         # 10 Hz loop
         await asyncio.sleep(0.1)
