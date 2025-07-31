@@ -571,8 +571,17 @@ def get_alarms(
 
 #receive webhook data
 @app.post("/edge/api/v1/analytics")
-async def receive_analytics(data: Dict):
+async def receive_analytics(data: Dict, x_auth_token: str = Header(default=None, alias="X-Auth-Token")):
     logger.info(f"Received analytics webhook with keys: {list(data.keys())}")
+
+
+    # Try to extract username from token if present
+    username = "system"
+    if x_auth_token:
+        try:
+            username = require_login(x_auth_token)
+        except Exception as e:
+            logger.warning(f"Auth token provided but invalid: {e}. Proceeding as 'system'.")
     
     # Try multiple possible field names for barcode
     barcode = None
@@ -605,7 +614,7 @@ async def receive_analytics(data: Dict):
         # Store the analytics data
         cur.execute(
             "INSERT INTO cycle_analytics(json_data, operator, shift_id, variant, barcode) VALUES(%s, %s, %s, %s, %s) RETURNING id",
-            (json.dumps(data), "system", 1, "default", barcode)
+            (json.dumps(data), username, 1, "default", barcode)
         )
        
         analytics_id = cur.fetchone()["id"]
