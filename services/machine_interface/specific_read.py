@@ -137,6 +137,8 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 if bc1:
                     print(f"[{now}] {st} barcode_1 decoded: {bc1}")
                     print(f"[{now}] Station: {st}, status_1: {v1}, edge1: {edge1}")
+                
+                await client.write_register(addr1, 0)
             if edge2 and spec.get("barcode_block_2"):
                 start, cnt = spec["barcode_block_2"]
                 slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
@@ -144,18 +146,20 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 if bc2:
                     print(f"[{now}] {st} barcode_2 decoded: {bc2}")
                     print(f"[{now}] Station: {st}, status_2: {v2}, edge2: {edge2}")
+                
+                await client.write_register(addr2, 0)
 
             
 
-            # clear bits when edges fire
-            if edge1:
-                rr = await client.read_holding_registers(addr1, count=1)
-                val = rr.registers[0]
-                await client.write_register(addr1, val & ~(1 << bit1))
-            if edge2:
-                rr = await client.read_holding_registers(addr2, count=1)
-                val = rr.registers[0]
-                await client.write_register(addr2, val & ~(1 << bit2))
+            # # clear bits when edges fire
+            # if edge1:
+            #     rr = await client.read_holding_registers(addr1, count=1)
+            #     val = rr.registers[0]
+            #     await client.write_register(addr1, val & ~(1 << bit1))
+            # if edge2:
+            #     rr = await client.read_holding_registers(addr2, count=1)
+            #     val = rr.registers[0]
+            #     await client.write_register(addr2, val & ~(1 << bit2))
 
         #     # LOADING_STATION: start new set
         #     if st == "loading_station":
