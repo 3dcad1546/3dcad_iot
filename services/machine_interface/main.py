@@ -18,7 +18,7 @@ USE_SIMULATOR = os.getenv("USE_SIMULATOR", "false").lower() in ("1", "true", "ye
 # In-memory tracking of all “in-flight” barcode-sets:
 active_sets: list = []
 pending_load = { 'bcA': None, 'bcB': None }
-
+MAX_REG_COUNT = 125
 
 # Simple guard to only spawn one new set per rising edge of the two global flags
 _load_seen = False
@@ -484,7 +484,12 @@ def sanitize_topic_name(topic_base, identifier):
     
     return full_topic
 
-
+def chunk_ranges(min_addr, max_addr, chunk_size=MAX_REG_COUNT):
+    addr = min_addr
+    while addr <= max_addr:
+        cnt = min(chunk_size, max_addr - addr + 1)
+        yield addr, cnt
+        addr += cnt
     
 
 
@@ -513,7 +518,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     }
     min_status = min(all_status_addrs)
     max_status = max(all_status_addrs)
-    status_count = max_status - min_status + 1
+    
 
     all_bc_addrs = []
     for spec in stations.values():
@@ -524,7 +529,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 all_bc_addrs.extend(range(start, start + cnt))
     min_bc = min(all_bc_addrs)
     max_bc = max(all_bc_addrs)
-    bc_count = max_bc - min_bc + 1
+    
 
     # --- 2) Prepare previous‐status snapshot & seen‐sets ---
     prev = {name: {"status_1": 0, "status_2": 0} for name in stations}
@@ -533,16 +538,26 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     while True:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
         any_update = False
-
         # A) Bulk‐read statuses
-        rr_stat = await client.read_holding_registers(min_status, status_count)
-        await asyncio.sleep(0.01)
-        regs_stat = rr_stat.registers if not rr_stat.isError() else []
+        regs_stat = []
+        for addr, cnt in chunk_ranges(min_status, max_status):
+            rr = await client.read_holding_registers(addr, count=cnt)
+            if not rr.isError():
+                regs_stat.extend(rr.registers)
+            else:
+                regs_stat.extend([0]*cnt)
+            await asyncio.sleep(0.005)
 
-        # B) Bulk‐read barcodes
-        rr_bc = await client.read_holding_registers(min_bc, bc_count)
-        await asyncio.sleep(0.01)
-        regs_bc = rr_bc.registers if not rr_bc.isError() else []
+        # B) Chunked bulk‐read barcodes
+        regs_bc = []
+        for addr, cnt in chunk_ranges(min_bc, max_bc):
+            rr = await client.read_holding_registers(addr, count=cnt)
+            if not rr.isError():
+                regs_bc.extend(rr.registers)
+            else:
+                regs_bc.extend([0]*cnt)
+            await asyncio.sleep(0.005)
+        
 
         # C) Per‐station edge detect + decode
         for st in PROCESS_STATIONS:
@@ -563,18 +578,20 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 start, cnt = spec["barcode_block_1"]
                 slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
                 bc1 = decode_string(slice_)
+                await client.write_register(addr1, 0)
             if edge2 and spec.get("barcode_block_2"):
                 start, cnt = spec["barcode_block_2"]
                 slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
                 bc2 = decode_string(slice_)
+                await client.write_register(addr2, 0)
 
             # clear PLC bits only when edges fired
-            if edge1:
-                val = (await client.read_holding_registers(addr1, 1)).registers[0]
-                await client.write_register(addr1, val & ~(1 << bit1))
-            if edge2:
-                val = (await client.read_holding_registers(addr2, 1)).registers[0]
-                await client.write_register(addr2, val & ~(1 << bit2))
+            # if edge1:
+            #     val = (await client.read_holding_registers(addr1, 1)).registers[0]
+            #     await client.write_register(addr1, val & ~(1 << bit1))
+            # if edge2:
+            #     val = (await client.read_holding_registers(addr2, 1)).registers[0]
+            #     await client.write_register(addr2, val & ~(1 << bit2))
 
             # --- LOADING STATION: create new set once both barcodes seen ---
             if st == "loading_station":
@@ -674,7 +691,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 )
 
         # 10 Hz pacing
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.01)
 
 
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=0.5):

@@ -151,15 +151,15 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
 
             
 
-            # clear bits when edges fire
-            if edge1:
-                rr = await client.read_holding_registers(addr1, count=1)
-                val = rr.registers[0]
-                await client.write_register(addr1, val & ~(1 << bit1))
-            if edge2:
-                rr = await client.read_holding_registers(addr2, count=1)
-                val = rr.registers[0]
-                await client.write_register(addr2, val & ~(1 << bit2))
+            # # clear bits when edges fire
+            # if edge1:
+            #     rr = await client.read_holding_registers(addr1, count=1)
+            #     val = rr.registers[0]
+            #     await client.write_register(addr1, val & ~(1 << bit1))
+            # if edge2:
+            #     rr = await client.read_holding_registers(addr2, count=1)
+            #     val = rr.registers[0]
+            #     await client.write_register(addr2, val & ~(1 << bit2))
 
             # LOADING_STATION: start new set
             if st == "loading_station":
@@ -236,7 +236,7 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
             print({"type":"full_update","sets":active_sets,"ts":now})
 
         # 10 Hz loop
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.01)
 
 
 # ─── ENTRY POINT ───────────────────────────────────────────────────────────
