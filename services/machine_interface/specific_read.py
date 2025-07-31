@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
-import os,json,time,asyncio,logging,requests,struct,re
+import os,json,time,asyncio
 from typing import Dict
 from collections import deque
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
-from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
-from pymodbus.constants import Endian
-# ─── CONFIG ────────────────────────────────────────────────────────────────
-PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
-PLC_PORT = int(os.getenv("PLC_PORT", "502"))
-REGISTER_MAP = read_json_file("register_map.json")
-MAX_REG_COUNT = 125  # Modbus limit
-active_sets: list = []
-pending_load = { 'bcA': None, 'bcB': None }
 
-# ─── HELPERS ───────────────────────────────────────────────────────────────
 def read_json_file(file_path):
     """
     Reads a JSON file and returns its content as a Python dictionary.
@@ -33,6 +23,17 @@ def read_json_file(file_path):
     except Exception as e:
         print(f"An unexpected error occurred while reading '{file_path}': {e}")
         return None
+
+# ─── CONFIG ────────────────────────────────────────────────────────────────
+PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
+PLC_PORT = int(os.getenv("PLC_PORT", "502"))
+REGISTER_MAP = read_json_file("register_map.json")
+MAX_REG_COUNT = 125  # Modbus limit
+active_sets: list = []
+pending_load = { 'bcA': None, 'bcB': None }
+
+# ─── HELPERS ───────────────────────────────────────────────────────────────
+
 
 
 def decode_string(words):
@@ -59,7 +60,7 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
       4) Publishes per‐set and full updates via Kafka
       5) Retires sets when unload station fires
     """
-    global active_sets, pending_load, aio_producer
+    global active_sets, pending_load, aio_producer # Assuming aio_producer might be used elsewhere
 
     PROCESS_STATIONS = [
         "loading_station", "xbot_1", "vision_1", "gantry_1",
@@ -194,7 +195,7 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
         if any_update :
             # per‐set updates
             for s in active_sets:
-                
+                # Assuming this print statement simulates a publish operation
                 print(
                     value={
                         "type": "set_update",
@@ -224,10 +225,10 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
             active_sets[:] = [s for s in active_sets if s["set_id"] not in completed]
             seen -= set(completed)
             # force a full update on retire
-            if aio_producer:
-               print(
-                    value={"type": "full_update", "sets": active_sets, "ts": now}
-                )
+            # if aio_producer: # This condition might be intended for an actual Kafka producer
+            print(
+                value={"type": "full_update", "sets": active_sets, "ts": now}
+            )
 
         # 10 Hz pacing
         await asyncio.sleep(0.1)
