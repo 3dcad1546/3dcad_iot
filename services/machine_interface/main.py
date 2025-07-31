@@ -499,7 +499,6 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient, per_station_delay
     """
     global active_sets, pending_load
 
-    # 0) Explicit ordering of “processing stations”
     PROCESS_STATIONS = [
         "loading_station",
         "xbot_1", "vision_1", "gantry_1",
@@ -507,23 +506,17 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient, per_station_delay
         "unload_station"
     ]
 
-    # 1) Load station map
-    cfg      = REGISTER_MAP
+    cfg = REGISTER_MAP
     stations = cfg["stations"]
 
-    # 2) Pre‐compute bulk‐read window
     all_regs = [r for name in PROCESS_STATIONS for r, _ in (stations[name]["status_1"], stations[name]["status_2"])]
     min_reg, max_reg = min(all_regs), max(all_regs)
     count = max_reg - min_reg + 1
 
-    # 3) Edge‐detect state
     prev = {name: {"status_1": 0, "status_2": 0} for name in PROCESS_STATIONS}
-
-    # 4) Dedupe retired sets
     seen_sets = set()
 
     while True:
-        # reconnect if needed
         if not client.connected:
             try:
                 await client.connect()
@@ -532,8 +525,6 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient, per_station_delay
                 continue
 
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
-
-        # ─── Bulk‐read all status regs ────────────────────────────
         rr = await client.read_holding_registers(min_reg, count)
         if rr.isError():
             await asyncio.sleep(0.05)
@@ -550,7 +541,6 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient, per_station_delay
             addr, cnt = stations[ls]["barcode_block_1"]
             br = await client.read_holding_registers(addr, cnt)
             pending_load["bcA"] = decode_string(br.registers) if not br.isError() else ""
-            # clear PLC bit
             reg, bit = stations[ls]["status_1"]
             curr = await client.read_holding_registers(reg, 1)
             await client.write_register(reg, curr.registers[0] & ~(1 << bit))
@@ -580,6 +570,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient, per_station_delay
         prev[ls]["status_1"], prev[ls]["status_2"] = v1, v2
 
         # ─── Per‐station edge‐detect & immediate full snapshot ───
+        any_set_updated = False
         for name in PROCESS_STATIONS:
             spec = stations[name]
             old1, old2 = prev[name]["status_1"], prev[name]["status_2"]
@@ -601,31 +592,39 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient, per_station_delay
                 prog = s["progress"].setdefault(name, {})
                 if v1 == 1 and not prog.get("latched", False):
                     prog.update({"status_1": 1, "ts": now, "latched": True})
+                    s["current_station"] = name
+                    any_set_updated = True
                 if v2 == 1 and not prog.get("latched_2", False):
                     prog.update({"status_2": 1, "ts_2": now, "latched_2": True})
+                    s["current_station"] = name
+                    any_set_updated = True
                 if prog.get("latched") and "ts" not in prog:
                     prog["ts"] = now
                 if prog.get("latched_2") and "ts_2" not in prog:
                     prog["ts_2"] = now
-                if prog.get("status_1") == 1 or prog.get("status_2") == 1:
-                    s["current_station"] = name
-
-            # publish full snapshot
-            await aio_producer.send_and_wait(
-                KAFKA_TOPIC_MACHINE_STATUS,
-                {"sets": active_sets, "ts": now}
-            )
 
             prev[name]["status_1"], prev[name]["status_2"] = v1, v2
+
+            # publish full snapshot after each station if any set updated
+            if any_set_updated and aio_producer:
+                await aio_producer.send_and_wait(
+                    KAFKA_TOPIC_MACHINE_STATUS,
+                    {"sets": active_sets, "ts": now}
+                )
+                any_set_updated = False  # Reset for next station
+
             await asyncio.sleep(per_station_delay)
 
         # ─── Retire completed sets ───────────────────────────────
         before = len(active_sets)
         active_sets[:] = [
             s for s in active_sets
-            if not s["progress"].get("unload_station", {}).get("latched", False)
+            if not (
+                s["progress"].get("unload_station", {}).get("latched", False) or
+                s["progress"].get("unload_station", {}).get("latched_2", False)
+            )
         ]
-        if len(active_sets) != before:
+        if len(active_sets) != before and aio_producer:
             await aio_producer.send_and_wait(
                 KAFKA_TOPIC_MACHINE_STATUS,
                 {"sets": active_sets, "ts": now}
