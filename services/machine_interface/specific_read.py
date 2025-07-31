@@ -1,20 +1,40 @@
 #!/usr/bin/env python3
-import asyncio
-import json
-import os
-import time
+import os,json,time,asyncio,logging,requests,struct,re
+from typing import Dict
+from collections import deque
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
-
+from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
+from pymodbus.constants import Endian
 # ─── CONFIG ────────────────────────────────────────────────────────────────
 PLC_HOST = os.getenv("PLC_IP", "192.168.10.3")
 PLC_PORT = int(os.getenv("PLC_PORT", "502"))
-REGISTER_MAP = "register_map.json"
+REGISTER_MAP = read_json_file("register_map.json")
 MAX_REG_COUNT = 125  # Modbus limit
 active_sets: list = []
 pending_load = { 'bcA': None, 'bcB': None }
 
 # ─── HELPERS ───────────────────────────────────────────────────────────────
+def read_json_file(file_path):
+    """
+    Reads a JSON file and returns its content as a Python dictionary.
+    """
+    if not os.path.exists(file_path):
+        print(f"Error: File not found at '{file_path}'")
+        return None
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON from '{file_path}': {e}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while reading '{file_path}': {e}")
+        return None
+
+
 def decode_string(words):
     raw = b''.join(
         (w & 0xFF).to_bytes(1, 'little') + ((w >> 8) & 0xFF).to_bytes(1, 'little')
