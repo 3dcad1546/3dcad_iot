@@ -485,6 +485,7 @@ def sanitize_topic_name(topic_base, identifier):
 
     
 
+
 async def read_specific_plc_data(client: AsyncModbusTcpClient):
     """
     Advanced workpiece tracking system that:
@@ -714,16 +715,10 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                             found_set["last_update"] = now
                         else:
                             logger.warning(f"⚠️ Barcode(s) '{barcode_1_read or ''}' '{barcode_2_read or ''}' at {station_name} not associated with any active set. (Might be an unexpected entry or late detection)")
-                            # Depending on your system, you might want to create a new set here
-                            # if it's possible for workpieces to enter mid-process.
-                            # For now, we'll log it as a warning.
 
             # 4. PUBLISH REAL-TIME UPDATES FOR INDIVIDUAL SET CHANGES (if any)
             if any_set_updated and aio_producer:
                 for current_set in active_sets:
-                    # If any of its stations had a status change or it was newly created
-                    # (This is a simplified check; a more granular check might be needed
-                    # if you only want to publish sets that *just* changed)
                     set_payload = {
                         "set": current_set,
                         "type": "set_update",
@@ -731,14 +726,16 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     }
                     logger.info(f"Publishing update for set {current_set['set_id']}")
                     sanitized_topic = sanitize_topic_name(f"{KAFKA_TOPIC_MACHINE_STATUS}.set", current_set['set_id'])
-                    await aio_producer.send(sanitized_topic, value=json.dumps(set_payload).encode('utf-8'))
+                    # Pass dict directly, serializer handles encoding
+                    await aio_producer.send(sanitized_topic, value=set_payload)
 
-                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value=json.dumps({
+                    # Pass dict directly
+                    await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value={
                         "type": "set_update",
                         "set_id": current_set["set_id"],
                         "current_station": current_set.get("current_station"),
                         "ts": now
-                    }).encode('utf-8'))
+                    })
 
                 # 5. PUBLISH ALL SETS PERIODICALLY (BATCH UPDATE)
                 full_payload = {
@@ -746,7 +743,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     "type": "full_update",
                     "ts": now
                 }
-                await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=json.dumps(full_payload).encode('utf-8'))
+                # Pass dict directly, serializer handles encoding
+                await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, value=full_payload)
                 logger.info(f"Published full update with {len(active_sets)} active sets")
 
             # 6. RETIRE COMPLETED SETS (unload_station status_1 = 1 OR status_2 = 1)
@@ -793,8 +791,6 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             logger.error(f"Error in read_specific_plc_data: {e}", exc_info=True)
 
         await asyncio.sleep(0.05) # 10Hz update rate
-
-
 
 
 
