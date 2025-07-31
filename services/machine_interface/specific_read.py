@@ -102,6 +102,8 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 regs_stat.extend([0]*cnt)
             await asyncio.sleep(0.005)
 
+        print(f"[{now}] Status registers: {regs_stat}")
+
         # B) Chunked bulk‐read barcodes
         regs_bc = []
         for addr, cnt in chunk_ranges(min_bc, max_bc):
@@ -112,114 +114,116 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 regs_bc.extend([0]*cnt)
             await asyncio.sleep(0.005)
 
-        # C) Per‐station edge detect + decode
-        for st in PROCESS_STATIONS:
-            spec = stations.get(st, {})
-            # status bits
-            addr1, bit1 = spec.get("status_1", (None, None))
-            v1 = ((regs_stat[addr1 - min_status] >> bit1) & 1) if addr1 is not None else 0
-            addr2, bit2 = spec.get("status_2", (None, None))
-            v2 = ((regs_stat[addr2 - min_status] >> bit2) & 1) if addr2 is not None else 0
+        print(f"[{now}] Status registers: {regs_stat}")
 
-            edge1 = prev[st]["status_1"] == 0 and v1 == 1
-            edge2 = prev[st]["status_2"] == 0 and v2 == 1
-            prev[st]["status_1"], prev[st]["status_2"] = v1, v2
+        # # C) Per‐station edge detect + decode
+        # for st in PROCESS_STATIONS:
+        #     spec = stations.get(st, {})
+        #     # status bits
+        #     addr1, bit1 = spec.get("status_1", (None, None))
+        #     v1 = ((regs_stat[addr1 - min_status] >> bit1) & 1) if addr1 is not None else 0
+        #     addr2, bit2 = spec.get("status_2", (None, None))
+        #     v2 = ((regs_stat[addr2 - min_status] >> bit2) & 1) if addr2 is not None else 0
 
-            bc1 = bc2 = None
-            if edge1 and spec.get("barcode_block_1"):
-                start, cnt = spec["barcode_block_1"]
-                slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
-                bc1 = decode_string(slice_)
-            if edge2 and spec.get("barcode_block_2"):
-                start, cnt = spec["barcode_block_2"]
-                slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
-                bc2 = decode_string(slice_)
+        #     edge1 = prev[st]["status_1"] == 0 and v1 == 1
+        #     edge2 = prev[st]["status_2"] == 0 and v2 == 1
+        #     prev[st]["status_1"], prev[st]["status_2"] = v1, v2
 
-            # clear bits when edges fire
-            if edge1:
-                rr = await client.read_holding_registers(addr1, count=1)
-                val = rr.registers[0]
-                await client.write_register(addr1, val & ~(1 << bit1))
-            if edge2:
-                rr = await client.read_holding_registers(addr2, count=1)
-                val = rr.registers[0]
-                await client.write_register(addr2, val & ~(1 << bit2))
+        #     bc1 = bc2 = None
+        #     if edge1 and spec.get("barcode_block_1"):
+        #         start, cnt = spec["barcode_block_1"]
+        #         slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
+        #         bc1 = decode_string(slice_)
+        #     if edge2 and spec.get("barcode_block_2"):
+        #         start, cnt = spec["barcode_block_2"]
+        #         slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
+        #         bc2 = decode_string(slice_)
 
-            # LOADING_STATION: start new set
-            if st == "loading_station":
-                if bc1: pending_load['bcA'] = bc1
-                if bc2: pending_load['bcB'] = bc2
-                if pending_load['bcA'] and pending_load['bcB']:
-                    sid = f"{pending_load['bcA']}|{pending_load['bcB']}"
-                    if sid not in seen:
-                        new_set = {
-                            "set_id": sid,
-                            "barcodes": [pending_load['bcA'], pending_load['bcB']],
-                            "progress": {
-                                "loading_station": {
-                                    "status_1":1, "status_2":1,
-                                    "barcode_1":pending_load['bcA'],
-                                    "barcode_2":pending_load['bcB'],
-                                    "ts":now, "latched":True
-                                }
-                            },
-                            "current_station":"loading_station",
-                            "created_ts":now,
-                            "last_update":now
-                        }
-                        active_sets.append(new_set)
-                        seen.add(sid)
-                        any_update = True
-                    pending_load['bcA'] = pending_load['bcB'] = None
+        #     # clear bits when edges fire
+        #     if edge1:
+        #         rr = await client.read_holding_registers(addr1, count=1)
+        #         val = rr.registers[0]
+        #         await client.write_register(addr1, val & ~(1 << bit1))
+        #     if edge2:
+        #         rr = await client.read_holding_registers(addr2, count=1)
+        #         val = rr.registers[0]
+        #         await client.write_register(addr2, val & ~(1 << bit2))
 
-            # OTHER STATIONS…
-            elif bc1 or bc2:
-                match = next(
-                    (s for s in active_sets
-                     if (bc1 and bc1 in s["barcodes"]) or (bc2 and bc2 in s["barcodes"])),
-                    None
-                )
-                if match:
-                    prog = match["progress"].setdefault(st, {})
-                    if bc1 and not prog.get("barcode_1"):
-                        prog.update({"status_1":1,"barcode_1":bc1,"ts":now,"latched":True})
-                        any_update = True
-                    if bc2 and not prog.get("barcode_2"):
-                        prog.update({"status_2":1,"barcode_2":bc2,"ts":now,"latched_2":True})
-                        any_update = True
+        #     # LOADING_STATION: start new set
+        #     if st == "loading_station":
+        #         if bc1: pending_load['bcA'] = bc1
+        #         if bc2: pending_load['bcB'] = bc2
+        #         if pending_load['bcA'] and pending_load['bcB']:
+        #             sid = f"{pending_load['bcA']}|{pending_load['bcB']}"
+        #             if sid not in seen:
+        #                 new_set = {
+        #                     "set_id": sid,
+        #                     "barcodes": [pending_load['bcA'], pending_load['bcB']],
+        #                     "progress": {
+        #                         "loading_station": {
+        #                             "status_1":1, "status_2":1,
+        #                             "barcode_1":pending_load['bcA'],
+        #                             "barcode_2":pending_load['bcB'],
+        #                             "ts":now, "latched":True
+        #                         }
+        #                     },
+        #                     "current_station":"loading_station",
+        #                     "created_ts":now,
+        #                     "last_update":now
+        #                 }
+        #                 active_sets.append(new_set)
+        #                 seen.add(sid)
+        #                 any_update = True
+        #             pending_load['bcA'] = pending_load['bcB'] = None
 
-                    new_idx = PROCESS_STATIONS.index(st)
-                    old_idx = PROCESS_STATIONS.index(match["current_station"])
-                    if new_idx > old_idx:
-                        match["current_station"] = st
-                        any_update = True
-                    match["last_update"] = now
+        #     # OTHER STATIONS…
+        #     elif bc1 or bc2:
+        #         match = next(
+        #             (s for s in active_sets
+        #              if (bc1 and bc1 in s["barcodes"]) or (bc2 and bc2 in s["barcodes"])),
+        #             None
+        #         )
+        #         if match:
+        #             prog = match["progress"].setdefault(st, {})
+        #             if bc1 and not prog.get("barcode_1"):
+        #                 prog.update({"status_1":1,"barcode_1":bc1,"ts":now,"latched":True})
+        #                 any_update = True
+        #             if bc2 and not prog.get("barcode_2"):
+        #                 prog.update({"status_2":1,"barcode_2":bc2,"ts":now,"latched_2":True})
+        #                 any_update = True
 
-        # D) Publish if updates…
-        if any_update:
-            for s in active_sets:
-                print({"type":"set_update","set_id":s["set_id"],"current_station":s["current_station"],"ts":now})
-            print({"type":"full_update","sets":active_sets,"ts":now})
+        #             new_idx = PROCESS_STATIONS.index(st)
+        #             old_idx = PROCESS_STATIONS.index(match["current_station"])
+        #             if new_idx > old_idx:
+        #                 match["current_station"] = st
+        #                 any_update = True
+        #             match["last_update"] = now
 
-        # E) Retire on unload edges…
-        completed = [
-            s["set_id"] for s in active_sets
-            if s["progress"].get("unload_station",{}).get("status_1")==1
-            or s["progress"].get("unload_station",{}).get("status_2")==1
-        ]
-        if completed:
-            us = stations["unload_station"]
-            for stat in ("status_1","status_2"):
-                addr, bit = us.get(stat,(None,None))
-                if addr is not None:
-                    rr = await client.read_holding_registers(addr, count=1)
-                    val = rr.registers[0]
-                    await client.write_register(addr, val & ~(1<<bit))
-            active_sets[:] = [s for s in active_sets if s["set_id"] not in completed]
-            seen -= set(completed) 
-            print({"type":"full_update","sets":active_sets,"ts":now})
+        # # D) Publish if updates…
+        # if any_update:
+        #     for s in active_sets:
+        #         print({"type":"set_update","set_id":s["set_id"],"current_station":s["current_station"],"ts":now})
+        #     print({"type":"full_update","sets":active_sets,"ts":now})
 
-        # 10 Hz loop
+        # # E) Retire on unload edges…
+        # completed = [
+        #     s["set_id"] for s in active_sets
+        #     if s["progress"].get("unload_station",{}).get("status_1")==1
+        #     or s["progress"].get("unload_station",{}).get("status_2")==1
+        # ]
+        # if completed:
+        #     us = stations["unload_station"]
+        #     for stat in ("status_1","status_2"):
+        #         addr, bit = us.get(stat,(None,None))
+        #         if addr is not None:
+        #             rr = await client.read_holding_registers(addr, count=1)
+        #             val = rr.registers[0]
+        #             await client.write_register(addr, val & ~(1<<bit))
+        #     active_sets[:] = [s for s in active_sets if s["set_id"] not in completed]
+        #     seen -= set(completed) 
+        #     print({"type":"full_update","sets":active_sets,"ts":now})
+
+        # # 10 Hz loop
         await asyncio.sleep(0.1)
 
 
