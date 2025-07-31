@@ -551,6 +551,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
             # 1. READ ALL STATUS REGISTERS IN ONE BATCH
             rr_status = await client.read_holding_registers(address=min_reg, count=status_count)
+            await asyncio.sleep(0.02)
             if rr_status.isError():
                 logger.error(f"Failed to read status registers: {rr_status}")
                 await asyncio.sleep(0.05) # Keep the sleep to avoid hammering PLC on error
@@ -604,6 +605,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     if "barcode_block_1" in station_spec:
                         bc1_start, bc1_count = station_spec["barcode_block_1"]
                         rr_bc1 = await client.read_holding_registers(address=bc1_start, count=bc1_count)
+                        await asyncio.sleep(0.02)
                         if not rr_bc1.isError():
                             barcode_1_read = decode_string(rr_bc1.registers)
                             logger.info(f"🔢 Read barcode 1 '{barcode_1_read}' at {station_name}.")
@@ -613,6 +615,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     # Immediately clear the PLC bit for status_1
                     reg1, bit1 = station_spec["status_1"]
                     rr_clear = await client.read_holding_registers(address=reg1, count=1)
+                    await asyncio.sleep(0.02)
                     if not rr_clear.isError() and rr_clear.registers:
                         current = rr_clear.registers[0]
                         new = current & ~(1 << bit1)  # Clear the bit
@@ -627,6 +630,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     if "barcode_block_2" in station_spec:
                         bc2_start, bc2_count = station_spec["barcode_block_2"]
                         rr_bc2 = await client.read_holding_registers(address=bc2_start, count=bc2_count)
+                        await asyncio.sleep(0.02)
                         if not rr_bc2.isError():
                             barcode_2_read = decode_string(rr_bc2.registers)
                             logger.info(f"🔢 Read barcode 2 '{barcode_2_read}' at {station_name}.")
@@ -636,6 +640,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     # Immediately clear the PLC bit for status_2
                     reg2, bit2 = station_spec["status_2"]
                     rr_clear = await client.read_holding_registers(address=reg2, count=1)
+                    await asyncio.sleep(0.02)
                     if not rr_clear.isError() and rr_clear.registers:
                         current = rr_clear.registers[0]
                         new = current & ~(1 << bit2)  # Clear the bit
@@ -769,6 +774,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 # Clear status_1 if set
                 if reg1 is not None:
                     rr1 = await client.read_holding_registers(address=reg1, count=1)
+                    await asyncio.sleep(0.02)
                     if not rr1.isError() and rr1.registers and ((rr1.registers[0] >> bit1) & 1):
                         current = rr1.registers[0]
                         new = current & ~(1 << bit1)
@@ -778,6 +784,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 # Clear status_2 if set
                 if reg2 is not None:
                     rr2 = await client.read_holding_registers(address=reg2, count=1)
+                    await asyncio.sleep(0.02)
                     if not rr2.isError() and rr2.registers and ((rr2.registers[0] >> bit2) & 1):
                         current = rr2.registers[0]
                         new = current & ~(1 << bit2)
@@ -794,7 +801,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
         except Exception as e:
             logger.error(f"Error in read_specific_plc_data: {e}", exc_info=True)
 
-        await asyncio.sleep(0.05) # 10Hz update rate
+        await asyncio.sleep(0.02) # 10Hz update rate
 
 
 
