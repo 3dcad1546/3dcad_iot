@@ -23,27 +23,26 @@ def decode_string(words):
 
 async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
     """
-    Standalone test for bulk-read logic:
-      1) Bulk-read all status bits and barcode registers
-      2) Detect rising edges and decode matching barcodes
-      3) Print new-set creation, station updates, and retire events
+    Standalone test for bulk-read logic with Modbus read limits:
+      1) Bulk-read all status bits in one call
+      2) Bulk-read barcode registers in chunks <=125 regs
+      3) Detect rising edges and decode matching barcodes
+      4) Print events to console
     """
-    # Load register map from JSON in same folder
+    # Load register map
     with open('register_map.json', 'r') as f:
         cfg = json.load(f)
     stations = cfg.get('stations', {})
-    PROCESS_STATIONS = [
-        'loading_station', 'xbot_1', 'vision_1', 'gantry_1',
-        'xbot_2', 'vision_2', 'gantry_2', 'vision_3', 'unload_station'
-    ]
+    PROCESS_STATIONS = list(stations.keys())
 
-    # Precompute bulk windows
+    # Precompute status window
     all_status = {addr for spec in stations.values()
                    for addr, _ in (spec.get('status_1', []), spec.get('status_2', []))
                    if addr is not None}
     min_status, max_status = min(all_status), max(all_status)
     status_count = max_status - min_status + 1
 
+    # Precompute barcode range and chunk windows
     all_bc = []
     for spec in stations.values():
         for blk in ('barcode_block_1', 'barcode_block_2'):
@@ -52,121 +51,106 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 start, cnt = b
                 all_bc.extend(range(start, start+cnt))
     min_bc, max_bc = min(all_bc), max(all_bc)
-    bc_count = max_bc - min_bc + 1
+    bc_total = max_bc - min_bc + 1
 
-    # Seed previous statuses to avoid initial false edges
+    # Create chunked windows respecting max 125 registers per read
+    bc_windows = []
+    max_regs = 125
+    offset = 0
+    while offset < bc_total:
+        count = min(max_regs, bc_total - offset)
+        bc_windows.append((min_bc + offset, count))
+        offset += count
+
+    # Seed previous snapshot
     prev = {}
-    try:
-        rr0 = await client.read_holding_registers(min_status, count=status_count)
-        regs0 = rr0.registers
-        for st in PROCESS_STATIONS:
-            spec = stations.get(st, {})
-            a1, b1 = spec.get('status_1', (None, None))
-            a2, b2 = spec.get('status_2', (None, None))
-            v1 = ((regs0[a1-min_status] >> b1) & 1) if a1 is not None else 0
-            v2 = ((regs0[a2-min_status] >> b2) & 1) if a2 is not None else 0
-            prev[st] = {'status_1': v1, 'status_2': v2}
-        print('Seeded previous status snapshot')
-    except Exception as e:
-        print(f'Failed to seed status snapshot: {e}')
-        prev = {st: {'status_1': 0, 'status_2': 0} for st in PROCESS_STATIONS}
+    rr0 = await client.read_holding_registers(min_status, count=status_count)
+    regs0 = rr0.registers
+    for st in PROCESS_STATIONS:
+        spec = stations[st]
+        a1,b1 = spec.get('status_1',(None,None))
+        a2,b2 = spec.get('status_2',(None,None))
+        v1 = ((regs0[a1-min_status]>>b1)&1) if a1 else 0
+        v2 = ((regs0[a2-min_status]>>b2)&1) if a2 else 0
+        prev[st] = {'status_1': v1, 'status_2': v2}
+    print('Seeded prev-status snapshot')
 
-    seen = {s['set_id'] for s in active_sets}
+    seen = set()
 
-    # Main loop
+    # Loop
     while True:
         now = time.strftime('%Y-%m-%dT%H:%M:%S')
         any_change = False
 
-        # Bulk read statuses
+        # Read status regs
         rr_stat = await client.read_holding_registers(min_status, count=status_count)
-        regs_stat = rr_stat.registers if not rr_stat.isError() else []
-        # Bulk read barcodes
-        rr_bc = await client.read_holding_registers(min_bc, count=bc_count)
-        regs_bc = rr_bc.registers if not rr_bc.isError() else []
+        regs_stat = rr_stat.registers
 
-        # Per-station processing
+        # Read barcode regs in chunks, build dict addr->value
+        bc_map = {}
+        for addr, cnt in bc_windows:
+            rr_bc = await client.read_holding_registers(addr, count=cnt)
+            for i, val in enumerate(rr_bc.registers): bc_map[addr + i] = val
+
+        # Process each station
         for st in PROCESS_STATIONS:
-            spec = stations.get(st, {})
-            a1, b1 = spec.get('status_1', (None, None))
-            a2, b2 = spec.get('status_2', (None, None))
-
-            v1 = ((regs_stat[a1-min_status] >> b1) & 1) if a1 is not None else 0
-            v2 = ((regs_stat[a2-min_status] >> b2) & 1) if a2 is not None else 0
-
-            edge1 = prev[st]['status_1'] == 0 and v1 == 1
-            edge2 = prev[st]['status_2'] == 0 and v2 == 1
+            spec = stations[st]
+            a1,b1 = spec.get('status_1',(None,None))
+            a2,b2 = spec.get('status_2',(None,None))
+            v1 = ((regs_stat[a1-min_status]>>b1)&1) if a1 else 0
+            v2 = ((regs_stat[a2-min_status]>>b2)&1) if a2 else 0
+            edge1 = prev[st]['status_1']==0 and v1==1
+            edge2 = prev[st]['status_2']==0 and v2==1
             prev[st]['status_1'], prev[st]['status_2'] = v1, v2
 
-            bc1 = bc2 = None
-            if edge1 and spec.get('barcode_block_1'):
-                s0, cnt = spec['barcode_block_1']
-                bc1 = decode_string(regs_bc[(s0-min_bc):(s0-min_bc+cnt)])
-            if edge2 and spec.get('barcode_block_2'):
-                s0, cnt = spec['barcode_block_2']
-                bc2 = decode_string(regs_bc[(s0-min_bc):(s0-min_bc+cnt)])
+            bc1=bc2=None
+            if edge1 and 'barcode_block_1' in spec:
+                s0,cnt = spec['barcode_block_1']
+                words=[bc_map.get(addr,0) for addr in range(s0,s0+cnt)]
+                bc1=decode_string(words)
+            if edge2 and 'barcode_block_2' in spec:
+                s0,cnt = spec['barcode_block_2']
+                words=[bc_map.get(addr,0) for addr in range(s0,s0+cnt)]
+                bc2=decode_string(words)
 
-            # Clear bits
+            # clear bits
             if edge1:
-                rr_clear = await client.read_holding_registers(a1, count=1)
-                val = rr_clear.registers[0]
-                await client.write_register(a1, val & ~(1 << b1))
+                rr_c=await client.read_holding_registers(a1, count=1)
+                await client.write_register(a1, rr_c.registers[0] & ~(1<<b1))
             if edge2:
-                rr_clear = await client.read_holding_registers(a2, count=1)
-                val = rr_clear.registers[0]
-                await client.write_register(a2, val & ~(1 << b2))
+                rr_c=await client.read_holding_registers(a2, count=1)
+                await client.write_register(a2, rr_c.registers[0] & ~(1<<b2))
 
-            # Loading station logic
-            if st == 'loading_station':
-                if bc1:
-                    pending_load['bcA'] = bc1
-                    print(f"[{now}] Loading station barcode1 detected: {bc1}")
-                if bc2:
-                    pending_load['bcB'] = bc2
-                    print(f"[{now}] Loading station barcode2 detected: {bc2}")
+            if st=='loading_station':
+                if bc1: pending_load['bcA']=bc1; print(f"[{now}] Load A:{bc1}")
+                if bc2: pending_load['bcB']=bc2; print(f"[{now}] Load B:{bc2}")
                 if pending_load['bcA'] and pending_load['bcB']:
-                    sid = f"{pending_load['bcA']}|{pending_load['bcB']}"
+                    sid=f"{pending_load['bcA']}|{pending_load['bcB']}"
                     if sid not in seen:
-                        active_sets.append({'set_id': sid, 'barcodes': [pending_load['bcA'], pending_load['bcB']]})
                         seen.add(sid)
-                        print(f"[{now}] New set created: {sid}")
-                        any_change = True
-                    pending_load['bcA'] = pending_load['bcB'] = None
-
-            # Other stations update
+                        active_sets.append({'set_id':sid})
+                        print(f"[{now}] New set:{sid}")
+                        any_change=True
+                    pending_load['bcA']=pending_load['bcB']=None
             elif bc1 or bc2:
-                match = next((s for s in active_sets
-                              if (bc1 and bc1 in s['barcodes']) or (bc2 and bc2 in s['barcodes'])), None)
-                if match:
-                    print(f"[{now}] Set {match['set_id']} at station {st}, bc1={bc1}, bc2={bc2}")
-                    any_change = True
+                for s in active_sets:
+                    if bc1 in s.get('barcodes',[]) or bc2 in s.get('barcodes',[]):
+                        print(f"[{now}] Set {s['set_id']} @ {st} bc1={bc1} bc2={bc2}")
+                        any_change=True
 
-        # Retire sets at unload station
-        completed = []
-        for s in active_sets:
-            completed.append(s['set_id'])
-        if completed:
-            for sid in completed:
-                print(f"[{now}] Retiring set {sid}")
-            active_sets[:] = [s for s in active_sets if s['set_id'] not in completed]
-            any_change = True
+        # retire all (demo)
+        if active_sets:
+            for s in active_sets: print(f"[{now}] Retire:{s['set_id']}")
+            active_sets.clear(); any_change=True
 
-        if not any_change:
-            print(f"[{now}] No change detected this cycle")
-
+        if not any_change: print(f"[{now}] No change")
         await asyncio.sleep(0.1)
 
 async def main():
-    client = AsyncModbusTcpClient(host=PLC_HOST, port=PLC_PORT)
+    client=AsyncModbusTcpClient(host=PLC_HOST,port=PLC_PORT)
     await client.connect()
-    if not client.connected:
-        print(f"Failed to connect to PLC at {PLC_HOST}:{PLC_PORT}")
-        return
-    print(f"Connected to PLC at {PLC_HOST}:{PLC_PORT}")
+    print(f"Connected to {PLC_HOST}:{PLC_PORT}")
     await read_specific_plc_data_test(client)
 
-if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print('Test terminated by user')
+if __name__=='__main__':
+    asyncio.run(main())
