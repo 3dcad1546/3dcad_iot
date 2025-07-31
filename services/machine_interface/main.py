@@ -488,16 +488,14 @@ def sanitize_topic_name(topic_base, identifier):
 async def read_specific_plc_data(client: AsyncModbusTcpClient,
                                  loop_sleep: float = 0.05):
     """
-    Bulk-scan PLC status bits and stream real-time set updates.
+    Bulk-scan PLC status bits, latch barcodes, clear every consumed bit,
+    and stream real-time updates.
 
-    – prime on first pass (no false edges)
-    – latch barcodes at loading_station
-    – keep progress per set
-    – publish:
-        • machine_status.set.<set_id>  (per-set)
-        • machine_status               (light notice)
-        • machine_status   (full snapshot when something changed)
-    – retire only after unload_station rising edge
+    – Any 1 seen is an event (no prime pass)
+    – Bit is cleared immediately after we log the event
+    – Per-set 'machine_status.set.<set_id>' and lightweight notices
+    – Full 'machine_status' snapshot whenever something changes
+    – Set retires on unload_station ▒status_1▒ edge
     """
     global active_sets, pending_load
 
@@ -515,9 +513,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient,
     min_reg, max_reg = min(reg_span), max(reg_span)
     span_count       = max_reg - min_reg + 1
 
-    # prev holds last seen raw bit values
+    # last raw level we saw; start all zeros
     prev = {name: {"s1": 0, "s2": 0} for name in stations}
-    first_cycle = True          # prime flag
 
     seen_sets: set[str] = set()
 
@@ -535,56 +532,44 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient,
         if rr.isError():
             await asyncio.sleep(loop_sleep)
             continue
-        regs = rr.registers
+        regs = rr.registers[:]                     # local copy we can mutate
 
-        # ------------------------------------------------------------- #
-        # 1. Build current bit map + detect edges
         edges: dict[str, dict[str, bool]] = {}
         bit_now = {}
+
+        # ------------------------------------------------------------- #
+        # 1. Detect edges AND clear any 1 we consume
         for name, spec in stations.items():
             r1, b1 = spec["status_1"]; r2, b2 = spec["status_2"]
             cur1 = (regs[r1 - min_reg] >> b1) & 1
             cur2 = (regs[r2 - min_reg] >> b2) & 1
             bit_now[name] = {"s1": cur1, "s2": cur2}
 
-            if not first_cycle:
-                edges[name] = {
-                    "s1": prev[name]["s1"] == 0 and cur1 == 1,
-                    "s2": prev[name]["s2"] == 0 and cur2 == 1,
-                }
+            edge1 = cur1 == 1                     # treat any 1 as new event
+            edge2 = cur2 == 1
+            edges[name] = {"s1": edge1, "s2": edge2}
 
-        # ------- first pass only primes prev and continues ------------
-        if first_cycle:
-            for n in stations:
-                prev[n]["s1"] = bit_now[n]["s1"]
-                prev[n]["s2"] = bit_now[n]["s2"]
-            first_cycle = False
-            await asyncio.sleep(loop_sleep)
-            continue
+            # clear bits we’ve just consumed
+            if edge1:
+                regs[r1 - min_reg] &= ~(1 << b1)
+                await client.write_register(r1, regs[r1 - min_reg])
+            if edge2:
+                regs[r2 - min_reg] &= ~(1 << b2)
+                await client.write_register(r2, regs[r2 - min_reg])
 
         any_set_changed = False
 
         # ------------------------------------------------------------- #
-        # 2. LOADING-STATION → read barcodes, form a new set
-        ls_edge1 = edges.get("loading_station", {}).get("s1", False)
-        ls_edge2 = edges.get("loading_station", {}).get("s2", False)
-
-        if ls_edge1:
+        # 2. Loading-station → read barcodes & create new set
+        if edges["loading_station"]["s1"]:
             blk, cnt = stations["loading_station"]["barcode_block_1"]
-            rb  = await client.read_holding_registers(blk, cnt)
+            rb = await client.read_holding_registers(blk, cnt)
             pending_load["bcA"] = decode_string(rb.registers) if not rb.isError() else ""
-            # clear bit back to 0
-            reg, bit = stations["loading_station"]["status_1"]
-            val = regs[reg - min_reg] & ~(1 << bit)
-            await client.write_register(reg, val)
 
-        if ls_edge2:
+        if edges["loading_station"]["s2"]:
             blk, cnt = stations["loading_station"]["barcode_block_2"]
             rb = await client.read_holding_registers(blk, cnt)
             pending_load["bcB"] = decode_string(rb.registers) if not rb.isError() else ""
-            reg, bit = stations["loading_station"]["status_2"]
-            val = regs[reg - min_reg] & ~(1 << bit)
-            await client.write_register(reg, val)
 
         if pending_load["bcA"] and pending_load["bcB"]:
             sid = f"{pending_load['bcA'].strip()}|{pending_load['bcB'].strip()}"
@@ -602,45 +587,36 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient,
             pending_load["bcA"] = pending_load["bcB"] = None
 
         # ------------------------------------------------------------- #
-        # 3. Update every active set with new edges
-        for s in active_sets:
+        # 3. Update each active set with new events
+        for s in list(active_sets):   # iterate over a copy for safe removal
             sid = s["set_id"]
             set_updated = False
 
             for name in PROCESS_STATIONS:
-                e1 = edges.get(name, {}).get("s1", False)
-                e2 = edges.get(name, {}).get("s2", False)
+                e1 = edges[name]["s1"]; e2 = edges[name]["s2"]
                 if not (e1 or e2):
-                    continue            # nothing new for this station
+                    continue
 
-                prog = s.setdefault("progress", {})
-                entry = prog.setdefault(name, {})
-                if e1:
-                    entry["status_1"] = 1
-                    entry["ts"]       = now
-                    entry["latched"]  = True
-                    reg, bit = stations[name]["status_1"]
-                    val = regs[reg - min_reg] & ~(1 << bit)
-                    await client.write_register(reg, val)
-                    set_updated = True
-                if e2:
-                    entry["status_2"] = 1
-                    entry["ts_2"]      = now
-                    entry["latched_2"] = True
-                    reg, bit = stations[name]["status_2"]
-                    val = regs[reg - min_reg] & ~(1 << bit)
-                    await client.write_register(reg, val)
-                    set_updated = True
-
-                # current station pointer
-                if set_updated:
+                entry = s.setdefault("progress", {}).setdefault(name, {})
+                if e1 and not entry.get("status_1"):
+                    entry.update({"status_1": 1, "ts": now, "latched": True})
                     s["current_station"] = name
+                    set_updated = True
+                if e2 and not entry.get("status_2"):
+                    entry.update({"status_2": 1, "ts_2": now, "latched_2": True})
+                    s["current_station"] = name
+                    set_updated = True
+
+            # retire after unload_station status_1 edge
+            if edges["unload_station"]["s1"] and s["current_station"] == "unload_station":
+                active_sets.remove(s)
+                any_set_changed = True
+                continue
 
             if set_updated:
                 s["last_update"] = now
-                any_set_changed  = True
+                any_set_changed = True
 
-                # per-set update
                 if aio_producer:
                     topic = sanitize_topic_name(f"{KAFKA_TOPIC_MACHINE_STATUS}.set", sid)
                     await aio_producer.send(topic, {
@@ -648,7 +624,6 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient,
                         "set": s,
                         "ts": now
                     })
-                    # lightweight notice
                     await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, {
                         "type": "set_update",
                         "set_id": sid,
@@ -657,32 +632,12 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient,
                     })
 
         # ------------------------------------------------------------- #
-
-        # 5. Full snapshot if anything changed
         if any_set_changed and aio_producer:
             await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, {
                 "type": "full_update",
                 "sets": active_sets,
                 "ts": now
             })
-        # 4. RETIRE sets when unload_station edge occurs
-        to_retire = []
-        for s in active_sets:
-            if edges.get("unload_station", {}).get("s1", False):
-                to_retire.append(s)
-        if to_retire:
-            any_set_changed = True
-            for s in to_retire:
-                active_sets.remove(s)
-
-        # ------------------------------------------------------------- #
-        
-
-        # ------------------------------------------------------------- #
-        # 6. prep for next loop
-        for name in stations:
-            prev[name]["s1"] = bit_now[name]["s1"]
-            prev[name]["s2"] = bit_now[name]["s2"]
 
         await asyncio.sleep(loop_sleep)
 
