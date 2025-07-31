@@ -485,183 +485,199 @@ def sanitize_topic_name(topic_base, identifier):
 
     
 
-async def read_specific_plc_data(client: AsyncModbusTcpClient, poll_interval: float = 0.05):
+async def read_specific_plc_data(client: AsyncModbusTcpClient,
+                                 loop_delay: float = 0.02):
     """
-    1) Bulk-read all status registers per loop.
-    2) On rising edge at loading_station → read bcA/bcB, clear bits, spawn new set.
-    3) For each active set, on any station rising-edge → latch ts, clear bit, track progress.
-    4) Emit per-set 'set_update' and a global 'full_update' on ANY change.
-    5) Retire sets when unload_station goes high (and clear its bits).
+    Robust, edge-driven PLC reader.
+
+    • Bulk-reads all status registers once per loop.
+    • Detects rising edges → latches ts + clears PLC bit.
+    • Maintains per-set progress and publishes:
+        – machine_status.set.<sid>   (lightweight)
+        – machine_status             (full snapshot)
+    • Keeps PROCESS_STATIONS ordering for current_station.
     """
     global active_sets, pending_load
-    # 1. load station definitions
-    cfg      = read_json_file(REGISTER_MAP)
-    stations = cfg["stations"]
-    # define order for current_station computation
+
+    # ------------------------------------------------------------------ #
+    # 0. helpers                                                          #
+    # ------------------------------------------------------------------ #
+    def bit(reg_val: int, bit_idx: int) -> int:
+        return (reg_val >> bit_idx) & 1
+
+    # ------------------------------------------------------------------ #
+    # 1. static meta-data                                                 #
+    # ------------------------------------------------------------------ #
+    stations: dict = REGISTER_MAP["stations"]
     PROCESS_STATIONS = [
-        "loading_station", "trace_interlock", "process_control", "mes_process",
-        "xbot_1", "vision_1", "gantry_1", "xbot_2", "vision_2", "gantry_2",
-        "vision_3", "trace_upload", "mes_upload", "unload_station"
+        "loading_station", "xbot_1", "vision_1", "gantry_1",
+        "xbot_2", "vision_2", "gantry_2", "vision_3",
+        # “MES / Trace” virtual stations
+        "process_control", "mes_process", "trace_interlock",
+        "trace_upload", "mes_upload",
+        "unload_station"
     ]
 
-    # precompute bulk-read range
-    all_regs = []
-    for spec in stations.values():
-        all_regs.extend([spec["status_1"][0], spec["status_2"][0]])
-    min_reg = min(all_regs)
-    max_reg = max(all_regs)
-    count   = max_reg - min_reg + 1
+    # registers span
+    all_regs = [r for spec in stations.values()
+                  for (r, _) in (spec["status_1"], spec["status_2"])]
+    min_reg, max_reg = min(all_regs), max(all_regs)
+    reg_count = max_reg - min_reg + 1
 
-    # edge‐detect state
-    prev = {name: {"status_1": 0, "status_2": 0} for name in stations}
-    seen_sets = set()
+    logger.info(f"[PLC-reader] bulk span {min_reg}-{max_reg} "
+                f"({reg_count} words)")
 
+    # ------------------------------------------------------------------ #
+    # 2. edge-tracking initialisation                                     #
+    # ------------------------------------------------------------------ #
+    # We *prime* prev by reading once – avoids “all bits already 1”
     while True:
-        # reconnect if needed
-        if not client.connected:
-            try:
+        if client.connected:
+            seed = await client.read_holding_registers(min_reg, reg_count)
+            if not seed.isError():
+                break
+        await asyncio.sleep(1)
+
+    prev_bits = {}
+    for name, spec in stations.items():
+        r1, b1 = spec["status_1"]
+        r2, b2 = spec["status_2"]
+        prev_bits[name] = {
+            "status_1": bit(seed.registers[r1 - min_reg], b1),
+            "status_2": bit(seed.registers[r2 - min_reg], b2)
+        }
+
+    seen_sets = set()   # avoid duplicates
+
+    # ------------------------------------------------------------------ #
+    # 3. main loop                                                       #
+    # ------------------------------------------------------------------ #
+    while True:
+        try:
+            if not client.connected:
                 await client.connect()
-            except:
-                await asyncio.sleep(0.5)
+
+            rr = await client.read_holding_registers(min_reg, reg_count)
+            if rr.isError():
+                await asyncio.sleep(loop_delay)
                 continue
 
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+            now = time.strftime("%Y-%m-%dT%H:%M:%S")
+            regs = rr.registers
+            curr_bits = {}
+            for name, spec in stations.items():
+                r1, b1 = spec["status_1"]
+                r2, b2 = spec["status_2"]
+                curr_bits[name] = {
+                    "status_1": bit(regs[r1 - min_reg], b1),
+                    "status_2": bit(regs[r2 - min_reg], b2)
+                }
 
-        # ─── BULK READ ─────────────────────────────────────────
-        rr = await client.read_holding_registers(min_reg, count)
-        if rr.isError():
-            await asyncio.sleep(poll_interval)
-            continue
-        regs = rr.registers
+            any_change = False
+            # ---------------------------------------------------------- #
+            # 3a. LOADING station → barcode capture / new set            #
+            # ---------------------------------------------------------- #
+            ls_bits_prev = prev_bits["loading_station"]
+            ls_bits_curr = curr_bits["loading_station"]
 
-        # extract current bits
-        curr = {}
-        for name, spec in stations.items():
-            r1, b1 = spec["status_1"]
-            r2, b2 = spec["status_2"]
-            v1 = (regs[r1-min_reg] >> b1) & 1
-            v2 = (regs[r2-min_reg] >> b2) & 1
-            curr[name] = {"status_1": v1, "status_2": v2}
+            # rising edges
+            if ls_bits_prev["status_1"] == 0 and ls_bits_curr["status_1"] == 1:
+                addr, cnt = stations["loading_station"]["barcode_block_1"]
+                bar = await client.read_holding_registers(addr, cnt)
+                pending_load["bcA"] = decode_string(bar.registers) \
+                    if not bar.isError() else ""
+                # clear the bit
+                reg, bit_idx = stations["loading_station"]["status_1"]
+                await client.write_register(reg,
+                    regs[reg - min_reg] & ~(1 << bit_idx))
 
-        any_change = False
+            if ls_bits_prev["status_2"] == 0 and ls_bits_curr["status_2"] == 1:
+                addr, cnt = stations["loading_station"]["barcode_block_2"]
+                bar = await client.read_holding_registers(addr, cnt)
+                pending_load["bcB"] = decode_string(bar.registers) \
+                    if not bar.isError() else ""
+                reg, bit_idx = stations["loading_station"]["status_2"]
+                await client.write_register(reg,
+                    regs[reg - min_reg] & ~(1 << bit_idx))
 
-        # ─── LOADING STATION: detect new set ──────────────────
-        ls = "loading_station"
-        old1, new1 = prev[ls]["status_1"], curr[ls]["status_1"]
-        old2, new2 = prev[ls]["status_2"], curr[ls]["status_2"]
+            if pending_load["bcA"] and pending_load["bcB"]:
+                sid = f"{pending_load['bcA']}|{pending_load['bcB']}"
+                pending_load["bcA"] = pending_load["bcB"] = None
+                if sid not in seen_sets:
+                    seen_sets.add(sid)
+                    active_sets.append({
+                        "set_id": sid,
+                        "barcodes": sid.split("|"),
+                        "progress": {},
+                        "created_ts": now,
+                        "last_update": now
+                    })
+                    any_change = True
+                    logger.info(f"[PLC‐reader] ↪ new set {sid}")
 
-        # rising edge on bit1 → bcA
-        if old1==0 and new1==1:
-            addr, cnt = stations[ls]["barcode_block_1"]
-            br = await client.read_holding_registers(addr, cnt)
-            pending_load["bcA"] = decode_string(br.registers) if not br.isError() else ""
-            # clear PLC bit
-            await client.write_register(*stations[ls]["status_1"])
+            # ---------------------------------------------------------- #
+            # 3b. update every active set                               #
+            # ---------------------------------------------------------- #
+            for s in active_sets:
+                set_changed = False
+                for st_name, bits in curr_bits.items():
+                    prev_b = s["progress"].get(st_name, {})
+                    if bits["status_1"] == 1 and prev_b.get("latched") != True:
+                        # latch
+                        s["progress"][st_name] = {
+                            "status_1": 1,
+                            "ts": now,
+                            "latched": True
+                        }
+                        # clear PLC bit
+                        reg, bit_idx = stations[st_name]["status_1"]
+                        await client.write_register(reg,
+                            regs[reg - min_reg] & ~(1 << bit_idx))
+                        set_changed = True
 
-        # rising edge on bit2 → bcB
-        if old2==0 and new2==1:
-            addr, cnt = stations[ls]["barcode_block_2"]
-            br = await client.read_holding_registers(addr, cnt)
-            pending_load["bcB"] = decode_string(br.registers) if not br.isError() else ""
-            await client.write_register(*stations[ls]["status_2"])
+                # compute current_station
+                for ordered in PROCESS_STATIONS:
+                    if s["progress"].get(ordered, {}).get("status_1") == 1:
+                        s["current_station"] = ordered
+                        break
 
-        # spawn new set when both bcA & bcB seen
-        if pending_load["bcA"] and pending_load["bcB"]:
-            sid = f"{pending_load['bcA']}|{pending_load['bcB']}"
-            if sid not in seen_sets:
-                seen_sets.add(sid)
-                active_sets.append({
-                    "set_id": sid,
-                    "barcodes": [pending_load["bcA"], pending_load["bcB"]],
-                    "progress": {},
-                    "created_ts": now,
-                    "last_update": now,
-                    "current_station": None
-                })
+                if set_changed:
+                    s["last_update"] = now
+                    # light-weight per-set publish
+                    await aio_producer.send(
+                        sanitize_topic_name(
+                            KAFKA_TOPIC_MACHINE_STATUS + ".set", s["set_id"]),
+                        {"type": "set_update", "set": s, "ts": now}
+                    )
+                    any_change = True
+
+            # ---------------------------------------------------------- #
+            # 3c. retire sets whose unload_station latched              #
+            # ---------------------------------------------------------- #
+            before = len(active_sets)
+            active_sets[:] = [
+                s for s in active_sets
+                if not s["progress"].get("unload_station", {}).get("latched", False)
+            ]
+            if len(active_sets) != before:
                 any_change = True
-            pending_load["bcA"] = pending_load["bcB"] = None
 
-        # ─── UPDATE EACH ACTIVE SET ──────────────────────────
-        for s in active_sets:
-            set_changed = False
-            # check every station for rising-edge
-            for name, bits in curr.items():
-                prev_bits = prev[name]
-                # status_1 rising
-                if bits["status_1"]==1 and prev_bits["status_1"]==0:
-                    # latch
-                    s["progress"].setdefault(name, {})\
-                       .update({"status_1":1, "ts":now, "latched":True})
-                    await client.write_register(*stations[name]["status_1"])
-                    set_changed = True
-                # status_2 rising
-                if bits["status_2"]==1 and prev_bits["status_2"]==0:
-                    s["progress"].setdefault(name, {})\
-                       .update({"status_2":1, "ts_2":now, "latched_2":True})
-                    await client.write_register(*stations[name]["status_2"])
-                    set_changed = True
-                # carry forward latched bits even if PLC bit auto-clears
-                prog = s["progress"].setdefault(name, {})
-                for st in ("status_1","status_2"):
-                    if prog.get(st)==1:
-                        prog.setdefault("latched", True)
+            # ---------------------------------------------------------- #
+            # 3d. FULL snapshot                                         #
+            # ---------------------------------------------------------- #
+            if any_change:
+                await aio_producer.send_and_wait(
+                    KAFKA_TOPIC_MACHINE_STATUS,
+                    {"sets": active_sets, "ts": now, "type": "full_update"}
+                )
 
-            # update current_station in the configured order
-            for name in PROCESS_STATIONS:
-                if s["progress"].get(name,{}).get("latched"):
-                    s["current_station"] = name
-                    break
+            # update prev for edge detect next round
+            prev_bits = curr_bits
+            await asyncio.sleep(loop_delay)
 
-            # emit per‐set update
-            if set_changed:
-                s["last_update"] = now
-                any_change = True
-                topic = sanitize_topic_name(f"{KAFKA_TOPIC_MACHINE_STATUS}.set", s["set_id"])
-                await aio_producer.send(topic, value={
-                    "type": "set_update",
-                    "set": s,
-                    "ts": now
-                })
-                # also notify general topic of this set’s move
-                await aio_producer.send(KAFKA_TOPIC_MACHINE_STATUS, value={
-                    "type": "set_update",
-                    "set_id": s["set_id"],
-                    "current_station": s["current_station"],
-                    "ts": now
-                })
-
-        # ─── FULL SNAPSHOT IF ANY CHANGE ─────────────────────
-        if any_change:
-            await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, {
-                "type": "full_update",
-                "sets": active_sets,
-                "ts": now
-            })
-
-        # ─── RETIRE COMPLETED SETS ────────────────────────────
-        before = len(active_sets)
-        active_sets[:] = [
-            s for s in active_sets
-            if not s["progress"].get("unload_station",{}).get("latched")
-        ]
-        if len(active_sets) != before:
-            # clear unload bits on PLC as well
-            us = stations["unload_station"]
-            for st in ("status_1","status_2"):
-                rr = await client.read_holding_registers(*us[st])
-                if not rr.isError() and ((rr.registers[0] >> us[st][1]) & 1):
-                    new = rr.registers[0] & ~(1 << us[st][1])
-                    await client.write_register(us[st][0], new)
-            # announce final full snapshot
-            await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, {
-                "type": "full_update",
-                "sets": active_sets,
-                "ts": now
-            })
-
-        # ─── PREPARE FOR NEXT ITERATION ───────────────────────
-        prev = curr
-        await asyncio.sleep(poll_interval)
+        except Exception as e:
+            logger.error("PLC-reader loop error", exc_info=e)
+            await asyncio.sleep(1)
 
 
 
