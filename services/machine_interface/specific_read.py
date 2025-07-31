@@ -134,16 +134,18 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 start, cnt = spec["barcode_block_1"]
                 slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
                 bc1 = decode_string(slice_)
+                if bc1:
+                    print(f"[{now}] {st} barcode_1 decoded: {bc1}")
+                    print(f"[{now}] Station: {st}, status_1: {v1}, edge1: {edge1}")
             if edge2 and spec.get("barcode_block_2"):
                 start, cnt = spec["barcode_block_2"]
                 slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
                 bc2 = decode_string(slice_)
-            print(f"[{now}] Station: {st}, status_1: {v1}, status_2: {v2}, edge1: {edge1}, edge2: {edge2}")
+                if bc2:
+                    print(f"[{now}] {st} barcode_2 decoded: {bc2}")
+                    print(f"[{now}] Station: {st}, status_2: {v2}, edge2: {edge2}")
 
-            if bc1:
-                print(f"[{now}] {st} barcode_1 decoded: {bc1}")
-            if bc2:
-                print(f"[{now}] {st} barcode_2 decoded: {bc2}")
+            
 
             # clear bits when edges fire
             if edge1:
