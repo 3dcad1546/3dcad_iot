@@ -518,7 +518,9 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
         if "status_2" in spec: # Handle stations with two status bits
             reg2, _ = spec["status_2"]
             all_registers.append(reg2)
-
+    if not all_registers:
+        logger.error("No status registers defined in the register map.")
+        return
     # Calculate optimal read range for status registers
     min_reg = min(all_registers) if all_registers else 0
     max_reg = max(all_registers) if all_registers else 0
