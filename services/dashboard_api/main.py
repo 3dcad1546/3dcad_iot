@@ -580,6 +580,7 @@ async def receive_analytics(data: Dict, x_auth_token: str = Header(default=None,
     if x_auth_token:
         try:
             username = require_login(x_auth_token)
+            logger.info(f"Current User '{field}': {username}")
         except Exception as e:
             logger.warning(f"Auth token provided but invalid: {e}. Proceeding as 'system'.")
     
