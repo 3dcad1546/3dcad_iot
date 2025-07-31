@@ -14,7 +14,6 @@ MAX_REG_COUNT = 125  # Modbus limit
 
 # ─── HELPERS ───────────────────────────────────────────────────────────────
 def decode_string(words):
-    """Convert list of 16-bit words into an ASCII string."""
     raw = b''.join(
         (w & 0xFF).to_bytes(1, 'little') + ((w >> 8) & 0xFF).to_bytes(1, 'little')
         for w in words
@@ -22,7 +21,6 @@ def decode_string(words):
     return raw.decode('ascii', errors='ignore').rstrip('\x00')
 
 def chunk_ranges(min_addr, max_addr, chunk_size=MAX_REG_COUNT):
-    """Yield (start, count) slices that do not exceed chunk_size."""
     addr = min_addr
     while addr <= max_addr:
         cnt = min(chunk_size, max_addr - addr + 1)
@@ -35,6 +33,9 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
     with open(REGISTER_MAP_FILE, 'r') as f:
         cfg = json.load(f)
     stations = cfg.get("stations", {})
+
+    # Prepare pending_load here
+    pending_load = {'bcA': None, 'bcB': None}
 
     # Precompute status window
     status_addrs = {
@@ -58,7 +59,7 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
     min_bc, max_bc = min(bc_addrs), max(bc_addrs)
     print(f"[INIT] Barcode window: {min_bc} → {max_bc} ({len(bc_addrs)} regs)")
 
-    # Prepare previous snapshot (seed so we don't treat existing '1's as edges)
+    # Prepare previous snapshot
     prev = {}
     try:
         rr0 = await client.read_holding_registers(min_status, count=status_count)
@@ -103,8 +104,7 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 print(f"[ERROR] Barcode read {addr}+{cnt} failed: {e}")
 
         # 3) Per-station edge detection & decode
-        for st in stations:
-            spec = stations[st]
+        for st, spec in stations.items():
             a1,b1 = spec.get("status_1",(None,None))
             a2,b2 = spec.get("status_2",(None,None))
 
@@ -159,11 +159,9 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
         # 4) Retire completed sets on unload
         removed = []
         for s in active_sets:
-            # detect unload edges
             spec = stations["unload_station"]
             u1,b1 = spec.get("status_1",(None,None))
             u2,b2 = spec.get("status_2",(None,None))
-            # if either bit is 1 now, retire
             if ((regs_stat[u1-min_status]>>b1)&1)==1 or ((regs_stat[u2-min_status]>>b2)&1)==1:
                 removed.append(s["id"])
         if removed:
@@ -176,9 +174,7 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
         if not any_update:
             print(f"[{now}] — no changes")
 
-        # sleep to pace loop
         await asyncio.sleep(0.1)
-
 
 # ─── ENTRY POINT ───────────────────────────────────────────────────────────
 async def main():
