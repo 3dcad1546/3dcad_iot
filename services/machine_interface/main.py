@@ -485,33 +485,45 @@ def sanitize_topic_name(topic_base, identifier):
 
     
 
-async def read_specific_plc_data(client: AsyncModbusTcpClient):
+async def read_specific_plc_data(client: AsyncModbusTcpClient, per_station_delay: float = 0.02):
     """
     1) Bulk‐read all status registers once per loop.
-    2) On each rising edge, latch the barcode(s), clear the PLC bit, and
-       start/or extend a set.
-    3) Maintain concurrent sets, keyed by 'bcA|bcB'.
-    4) Whenever ANY station bit changes on ANY set:
-       A) publish a full machine_status update (same shape your UI consumes)
+    2) On each station’s rising edge:
+       - latch barcode(s) at loading_station,
+       - instantiate new sets,
+       - latch station visits for each active set,
+       - clear the PLC bit.
+    3) After handling each station, immediately publish a full 'sets' snapshot
+       in the same shape the UI already consumes.
+    4) Retire completed sets when unload_station latches.
     """
     global active_sets, pending_load
 
-    # 1) load your station map
-    cfg      = read_json_file("register_map.json")
-    stations = cfg["stations"]    # e.g. { "loading_station": { "status_1": [3303,2], ... }, ... }
+    # 0) Explicit ordering of “processing stations”
+    PROCESS_STATIONS = [
+        "loading_station",
+        "xbot_1", "vision_1", "gantry_1",
+        "xbot_2", "vision_2", "gantry_2", "vision_3",
+        "unload_station"
+    ]
 
-    # Pre‐compute the bulk‐read window
-    all_regs = [r for spec in stations.values() for r, _ in (spec["status_1"], spec["status_2"])]
+    # 1) Load station map
+    cfg      = REGISTER_MAP
+    stations = cfg["stations"]
+
+    # 2) Pre‐compute bulk‐read window
+    all_regs = [r for name in PROCESS_STATIONS for r, _ in (stations[name]["status_1"], stations[name]["status_2"])]
     min_reg, max_reg = min(all_regs), max(all_regs)
     count = max_reg - min_reg + 1
 
-    # For edge detection
-    prev = {name: {"status_1": 0, "status_2": 0} for name in stations}
+    # 3) Edge‐detect state
+    prev = {name: {"status_1": 0, "status_2": 0} for name in PROCESS_STATIONS}
 
-    # To avoid resurrecting retired sets
+    # 4) Dedupe retired sets
     seen_sets = set()
 
     while True:
+        # reconnect if needed
         if not client.connected:
             try:
                 await client.connect()
@@ -521,112 +533,107 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
 
-        # ─── bulk‐read status bits ────────────────────────────
+        # ─── Bulk‐read all status regs ────────────────────────────
         rr = await client.read_holding_registers(min_reg, count)
         if rr.isError():
             await asyncio.sleep(0.05)
             continue
         regs = rr.registers
 
-        # build current snapshot of each station’s two bits
-        curr = {}
-        for name, spec in stations.items():
-            r1, b1 = spec["status_1"]
-            r2, b2 = spec["status_2"]
-            curr[name] = {
-                "status_1": (regs[r1 - min_reg] >> b1) & 1,
-                "status_2": (regs[r2 - min_reg] >> b2) & 1
-            }
-
-        any_change = False
-
-        # ─── loading_station → new‐set detection ────────────
+        # ─── Loading station: latch barcodes & create new sets ────
         ls = "loading_station"
-        old1, new1 = prev[ls]["status_1"], curr[ls]["status_1"]
-        old2, new2 = prev[ls]["status_2"], curr[ls]["status_2"]
+        old1, old2 = prev[ls]["status_1"], prev[ls]["status_2"]
+        v1 = (regs[stations[ls]["status_1"][0] - min_reg] >> stations[ls]["status_1"][1]) & 1
+        v2 = (regs[stations[ls]["status_2"][0] - min_reg] >> stations[ls]["status_2"][1]) & 1
 
-        # A) rising edge bit1 → barcode A
-        if old1 == 0 and new1 == 1:
+        if old1 == 0 and v1 == 1:
             addr, cnt = stations[ls]["barcode_block_1"]
             br = await client.read_holding_registers(addr, cnt)
             pending_load["bcA"] = decode_string(br.registers) if not br.isError() else ""
-            await client.write_register(*stations[ls]["status_1"])
-        # B) rising edge bit2 → barcode B
-        if old2 == 0 and new2 == 1:
+            # clear PLC bit
+            reg, bit = stations[ls]["status_1"]
+            curr = await client.read_holding_registers(reg, 1)
+            await client.write_register(reg, curr.registers[0] & ~(1 << bit))
+
+        if old2 == 0 and v2 == 1:
             addr, cnt = stations[ls]["barcode_block_2"]
             br = await client.read_holding_registers(addr, cnt)
             pending_load["bcB"] = decode_string(br.registers) if not br.isError() else ""
-            await client.write_register(*stations[ls]["status_2"])
+            reg, bit = stations[ls]["status_2"]
+            curr = await client.read_holding_registers(reg, 1)
+            await client.write_register(reg, curr.registers[0] & ~(1 << bit))
 
-        # C) once both are seen → new set
         if pending_load["bcA"] and pending_load["bcB"]:
             sid = f"{pending_load['bcA']}|{pending_load['bcB']}"
             if sid not in seen_sets:
                 seen_sets.add(sid)
                 active_sets.append({
-                    "set_id":        sid,
-                    "barcodes":      [pending_load["bcA"], pending_load["bcB"]],
-                    "progress":      {},
-                    "created_ts":    now,
-                    "last_update":   now,
+                    "set_id": sid,
+                    "barcodes": [pending_load["bcA"], pending_load["bcB"]],
+                    "progress": {},
+                    "created_ts": now,
+                    "last_update": now,
                     "current_station": None
                 })
-                any_change = True
             pending_load["bcA"] = pending_load["bcB"] = None
 
-        # ─── update each set’s progress ──────────────────────
-        for s in active_sets:
-            set_changed = False
-            for name, spec in stations.items():
-                v1 = curr[name]["status_1"]
-                prog = s.setdefault("progress", {})
-                old = prog.get(name, {})
+        prev[ls]["status_1"], prev[ls]["status_2"] = v1, v2
 
-                # latch on rising edge
-                if v1 == 1 and not old.get("latched", False):
-                    prog[name] = {"status_1": 1, "ts": now, "latched": True}
-                    await client.write_register(*spec["status_1"])
-                    set_changed = True
+        # ─── Per‐station edge‐detect & immediate full snapshot ───
+        for name in PROCESS_STATIONS:
+            spec = stations[name]
+            old1, old2 = prev[name]["status_1"], prev[name]["status_2"]
+            v1 = (regs[spec["status_1"][0] - min_reg] >> spec["status_1"][1]) & 1
+            v2 = (regs[spec["status_2"][0] - min_reg] >> spec["status_2"][1]) & 1
 
-                # carry‐forward previous latched if bit has gone low
-                elif old.get("latched", False):
-                    prog[name] = {
-                        "status_1": 0,
-                        "ts": old["ts"],
-                        "latched": True
-                    }
+            # clear on rising edges
+            if old1 == 0 and v1 == 1:
+                reg, bit = spec["status_1"]
+                curr = await client.read_holding_registers(reg, 1)
+                await client.write_register(reg, curr.registers[0] & ~(1 << bit))
+            if old2 == 0 and v2 == 1:
+                reg, bit = spec["status_2"]
+                curr = await client.read_holding_registers(reg, 1)
+                await client.write_register(reg, curr.registers[0] & ~(1 << bit))
 
-            # move current_station to the most recent latched
-            for name in stations:
-                if s["progress"].get(name, {}).get("latched"):
+            # update each active set
+            for s in active_sets:
+                prog = s["progress"].setdefault(name, {})
+                if v1 == 1 and not prog.get("latched", False):
+                    prog.update({"status_1": 1, "ts": now, "latched": True})
+                if v2 == 1 and not prog.get("latched_2", False):
+                    prog.update({"status_2": 1, "ts_2": now, "latched_2": True})
+                if prog.get("latched") and "ts" not in prog:
+                    prog["ts"] = now
+                if prog.get("latched_2") and "ts_2" not in prog:
+                    prog["ts_2"] = now
+                if prog.get("status_1") == 1 or prog.get("status_2") == 1:
                     s["current_station"] = name
-                    break
 
-            if set_changed:
-                s["last_update"] = now
-                any_change = True
+            # publish full snapshot
+            await aio_producer.send_and_wait(
+                KAFKA_TOPIC_MACHINE_STATUS,
+                {"sets": active_sets, "ts": now}
+            )
 
-        # ─── retire completed (unload) sets ──────────────────
+            prev[name]["status_1"], prev[name]["status_2"] = v1, v2
+            await asyncio.sleep(per_station_delay)
+
+        # ─── Retire completed sets ───────────────────────────────
         before = len(active_sets)
         active_sets[:] = [
             s for s in active_sets
             if not s["progress"].get("unload_station", {}).get("latched", False)
         ]
         if len(active_sets) != before:
-            any_change = True
+            await aio_producer.send_and_wait(
+                KAFKA_TOPIC_MACHINE_STATUS,
+                {"sets": active_sets, "ts": now}
+            )
 
-        # ─── full‐update publish ─────────────────────────────
-        if any_change and aio_producer:
-            full = {"sets": active_sets, "ts": now}
-            await aio_producer.send_and_wait(KAFKA_TOPIC_MACHINE_STATUS, full)
-
-        # ─── rotate for next edge detect ────────────────────
-        for name in stations:
-            prev[name]["status_1"] = curr[name]["status_1"]
-            prev[name]["status_2"] = curr[name]["status_2"]
-
-        # small throttle
         await asyncio.sleep(0.05)
+
+
 
 
 
