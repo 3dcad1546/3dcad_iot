@@ -223,6 +223,7 @@ class CycleReportItemAnalytics(BaseModel):
     operator: str
     shift_id: int
     variant: str
+    barcode: str
     received_ts: datetime
     analytics: dict  # json_data stored here
 
@@ -666,6 +667,7 @@ def get_cycles(
     operator: Optional[str] = None,
     shift_id: Optional[int] = None,
     variant: Optional[str] = None,
+    barcode: Optional[str] = None,
     from_ts: Optional[datetime] = Query(None, alias="from"),
     to_ts: Optional[datetime] = Query(None, alias="to"),
     limit: int = Query(400, ge=1, le=500),
@@ -683,6 +685,9 @@ def get_cycles(
     if variant:
         clauses.append("ca.variant = %s")
         params.append(variant)
+    if barcode:
+        clauses.append("ca.barcode = %s")
+        params.append(barcode)
     if from_ts:
         from_ts_ist = from_ts.astimezone(IST)
         clauses.append("ca.received_ts >= %s")
@@ -697,6 +702,7 @@ def get_cycles(
             ca.operator,
             ca.shift_id,
             ca.variant,
+            ca.barcode,
             ca.received_ts,
             ca.json_data AS analytics
         FROM cycle_analytics ca
@@ -715,6 +721,7 @@ def get_cycles(
             "operator": r["operator"],
             "shift_id": r["shift_id"],
             "variant": r["variant"] or "",
+            "barcode": r["barcode"] or "",
             "analytics": r["analytics"] or {},
             "received_ts": r["received_ts"].astimezone(IST) if r["received_ts"] else None,
         }
