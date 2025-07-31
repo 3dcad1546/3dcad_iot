@@ -114,30 +114,36 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
                 regs_bc.extend([0]*cnt)
             await asyncio.sleep(0.005)
 
-        print(f"[{now}] Status registers: {regs_stat}")
+        print(f"[{now}] Barcode registers: {regs_bc}")
 
-        # # C) Per‐station edge detect + decode
-        # for st in PROCESS_STATIONS:
-        #     spec = stations.get(st, {})
-        #     # status bits
-        #     addr1, bit1 = spec.get("status_1", (None, None))
-        #     v1 = ((regs_stat[addr1 - min_status] >> bit1) & 1) if addr1 is not None else 0
-        #     addr2, bit2 = spec.get("status_2", (None, None))
-        #     v2 = ((regs_stat[addr2 - min_status] >> bit2) & 1) if addr2 is not None else 0
+        # C) Per‐station edge detect + decode
+        for st in PROCESS_STATIONS:
+            spec = stations.get(st, {})
+            # status bits
+            addr1, bit1 = spec.get("status_1", (None, None))
+            v1 = ((regs_stat[addr1 - min_status] >> bit1) & 1) if addr1 is not None else 0
+            addr2, bit2 = spec.get("status_2", (None, None))
+            v2 = ((regs_stat[addr2 - min_status] >> bit2) & 1) if addr2 is not None else 0
 
-        #     edge1 = prev[st]["status_1"] == 0 and v1 == 1
-        #     edge2 = prev[st]["status_2"] == 0 and v2 == 1
-        #     prev[st]["status_1"], prev[st]["status_2"] = v1, v2
+            edge1 = prev[st]["status_1"] == 0 and v1 == 1
+            edge2 = prev[st]["status_2"] == 0 and v2 == 1
+            prev[st]["status_1"], prev[st]["status_2"] = v1, v2
 
-        #     bc1 = bc2 = None
-        #     if edge1 and spec.get("barcode_block_1"):
-        #         start, cnt = spec["barcode_block_1"]
-        #         slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
-        #         bc1 = decode_string(slice_)
-        #     if edge2 and spec.get("barcode_block_2"):
-        #         start, cnt = spec["barcode_block_2"]
-        #         slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
-        #         bc2 = decode_string(slice_)
+            bc1 = bc2 = None
+            if edge1 and spec.get("barcode_block_1"):
+                start, cnt = spec["barcode_block_1"]
+                slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
+                bc1 = decode_string(slice_)
+            if edge2 and spec.get("barcode_block_2"):
+                start, cnt = spec["barcode_block_2"]
+                slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
+                bc2 = decode_string(slice_)
+            print(f"[{now}] Station: {st}, status_1: {v1}, status_2: {v2}, edge1: {edge1}, edge2: {edge2}")
+
+            if bc1:
+                print(f"[{now}] {st} barcode_1 decoded: {bc1}")
+            if bc2:
+                print(f"[{now}] {st} barcode_2 decoded: {bc2}")
 
         #     # clear bits when edges fire
         #     if edge1:
