@@ -57,7 +57,7 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
     # Seed previous statuses to avoid initial false edges
     prev = {}
     try:
-        rr0 = await client.read_holding_registers(min_status, status_count)
+        rr0 = await client.read_holding_registers(min_status, count=status_count)
         regs0 = rr0.registers
         for st in PROCESS_STATIONS:
             spec = stations.get(st, {})
@@ -79,10 +79,10 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
         any_change = False
 
         # Bulk read statuses
-        rr_stat = await client.read_holding_registers(min_status, status_count)
+        rr_stat = await client.read_holding_registers(min_status, count=status_count)
         regs_stat = rr_stat.registers if not rr_stat.isError() else []
         # Bulk read barcodes
-        rr_bc = await client.read_holding_registers(min_bc, bc_count)
+        rr_bc = await client.read_holding_registers(min_bc, count=bc_count)
         regs_bc = rr_bc.registers if not rr_bc.isError() else []
 
         # Per-station processing
@@ -108,10 +108,12 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
 
             # Clear bits
             if edge1:
-                val = (await client.read_holding_registers(a1, 1)).registers[0]
+                rr_clear = await client.read_holding_registers(a1, count=1)
+                val = rr_clear.registers[0]
                 await client.write_register(a1, val & ~(1 << b1))
             if edge2:
-                val = (await client.read_holding_registers(a2, 1)).registers[0]
+                rr_clear = await client.read_holding_registers(a2, count=1)
+                val = rr_clear.registers[0]
                 await client.write_register(a2, val & ~(1 << b2))
 
             # Loading station logic
@@ -142,7 +144,6 @@ async def read_specific_plc_data_test(client: AsyncModbusTcpClient):
         # Retire sets at unload station
         completed = []
         for s in active_sets:
-            # simple retire: if any unload bits set (logic may be extended)
             completed.append(s['set_id'])
         if completed:
             for sid in completed:
