@@ -1176,58 +1176,104 @@ async def consume_machine_status_and_populate_db():
 #             await websocket.close(code=1011, reason=f"Error: {str(e)}")
 
 
+# @app.websocket("/ws/machine-status")
+# async def websocket_machine_status(websocket: WebSocket):
+#     """
+#     WebSocket endpoint for real-time machine status updates.
+#     Sends initial full state and continues with incremental updates.
+#     """
+#     logger.info("WebSocket connection attempt to /ws/machine-status")
+#     await mgr.connect("machine-status", websocket)
+#     logger.info("WebSocket connected to machine-status")
+
+#     consumer = AIOKafkaConsumer(
+#         MACHINE_STATUS_TOPIC,
+#         bootstrap_servers=KAFKA_BOOTSTRAP,
+#         auto_offset_reset="latest",
+#         group_id=f"ws-{uuid.uuid4()}",
+#         value_deserializer=lambda b: json.loads(b.decode()),
+#     )
+
+#     try:
+#         await consumer.start()
+
+#         # === Initial state (one-time full message with "sets") ===
+#         try:
+#             start_time = time.time()
+#             async for msg in consumer:
+#                 if msg.value and "sets" in msg.value:
+#                     # --- DEBUG: Log the message before sending ---
+#                     logger.info(f"KAFKA_MSG (initial): {msg.value}")
+                    
+#                     # --- Temporarily disable sending to WebSocket ---
+#                     # await websocket.send_json(msg.value)
+                    
+#                     logger.info("Sent initial machine status to client") # This log will now mean "processed initial message"
+#                     break
+#                 if time.time() - start_time > 2:
+#                     logger.warning("Timeout waiting for initial machine status")
+#                     break
+#         except Exception as e:
+#             logger.error(f"Error fetching initial machine status: {e}")
+
+#         # === Continuous updates ===
+#         async for msg in consumer:
+#             try:
+#                 # --- DEBUG: Log the message before sending ---
+#                 logger.info(f"KAFKA_MSG (update): {msg.value}")
+
+#                 # --- Temporarily disable sending to WebSocket ---
+#                 # await websocket.send_json(msg.value)
+
+#             except Exception as e:
+#                 logger.error(f"Error sending update to WebSocket: {e}")
+#                 break  # Exit on WebSocket send failure
+
+#     except WebSocketDisconnect:
+#         logger.info("WebSocket disconnected from machine-status")
+#     except Exception as e:
+#         logger.error(f"Unexpected WebSocket error: {e}")
+#         if hasattr(websocket, 'client_state') and websocket.client_state.state != 4:
+#             await websocket.close(code=1011, reason=f"Error: {str(e)}")
+#     finally:
+#         await consumer.stop()
+#         mgr.disconnect("machine-status", websocket)
+
 @app.websocket("/ws/machine-status")
 async def websocket_machine_status(websocket: WebSocket):
     """
-    WebSocket endpoint for real-time machine status updates.
-    Sends initial full state and continues with incremental updates.
+    WebSocket endpoint for testing the Kafka channel for machine status.
+    It connects and logs every message received from the topic.
     """
     logger.info("WebSocket connection attempt to /ws/machine-status")
     await mgr.connect("machine-status", websocket)
-    logger.info("WebSocket connected to machine-status")
+    logger.info("WebSocket connected to machine-status for testing.")
 
     consumer = AIOKafkaConsumer(
         MACHINE_STATUS_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP,
         auto_offset_reset="latest",
-        group_id=f"ws-{uuid.uuid4()}",
+        group_id=f"ws-test-{uuid.uuid4()}",  # Use a unique group_id for testing
         value_deserializer=lambda b: json.loads(b.decode()),
     )
 
     try:
         await consumer.start()
+        logger.info("Kafka consumer started for machine-status testing.")
 
-        # === Initial state (one-time full message with "sets") ===
-        try:
-            start_time = time.time()
-            async for msg in consumer:
-                if msg.value and "sets" in msg.value:
-                    # --- DEBUG: Log the message before sending ---
-                    logger.info(f"KAFKA_MSG (initial): {msg.value}")
-                    
-                    # --- Temporarily disable sending to WebSocket ---
-                    # await websocket.send_json(msg.value)
-                    
-                    logger.info("Sent initial machine status to client") # This log will now mean "processed initial message"
-                    break
-                if time.time() - start_time > 2:
-                    logger.warning("Timeout waiting for initial machine status")
-                    break
-        except Exception as e:
-            logger.error(f"Error fetching initial machine status: {e}")
-
-        # === Continuous updates ===
+        # Single continuous loop to log all messages
         async for msg in consumer:
             try:
-                # --- DEBUG: Log the message before sending ---
-                logger.info(f"KAFKA_MSG (update): {msg.value}")
+                # Log every message received from the Kafka topic
+                logger.info(f"KAFKA_MSG: {msg.value}")
 
-                # --- Temporarily disable sending to WebSocket ---
+                # The websocket.send_json call is intentionally commented out for testing
                 # await websocket.send_json(msg.value)
 
             except Exception as e:
-                logger.error(f"Error sending update to WebSocket: {e}")
-                break  # Exit on WebSocket send failure
+                logger.error(f"Error processing message: {e}")
+                # Continue to the next message
+                continue
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected from machine-status")
@@ -1236,8 +1282,10 @@ async def websocket_machine_status(websocket: WebSocket):
         if hasattr(websocket, 'client_state') and websocket.client_state.state != 4:
             await websocket.close(code=1011, reason=f"Error: {str(e)}")
     finally:
+        # Ensure consumer is stopped and connection is cleaned up
         await consumer.stop()
         mgr.disconnect("machine-status", websocket)
+        logger.info("Cleaned up resources for machine-status WebSocket.")
 
 
 @app.websocket("/ws/plc-write")
