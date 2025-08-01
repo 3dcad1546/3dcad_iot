@@ -1202,8 +1202,13 @@ async def websocket_machine_status(websocket: WebSocket):
             start_time = time.time()
             async for msg in consumer:
                 if msg.value and "sets" in msg.value:
-                    await websocket.send_json(msg.value)
-                    logger.info("Sent initial machine status to client")
+                    # --- DEBUG: Log the message before sending ---
+                    logger.info(f"KAFKA_MSG (initial): {msg.value}")
+                    
+                    # --- Temporarily disable sending to WebSocket ---
+                    # await websocket.send_json(msg.value)
+                    
+                    logger.info("Sent initial machine status to client") # This log will now mean "processed initial message"
                     break
                 if time.time() - start_time > 2:
                     logger.warning("Timeout waiting for initial machine status")
@@ -1214,7 +1219,12 @@ async def websocket_machine_status(websocket: WebSocket):
         # === Continuous updates ===
         async for msg in consumer:
             try:
-                await websocket.send_json(msg.value)
+                # --- DEBUG: Log the message before sending ---
+                logger.info(f"KAFKA_MSG (update): {msg.value}")
+
+                # --- Temporarily disable sending to WebSocket ---
+                # await websocket.send_json(msg.value)
+
             except Exception as e:
                 logger.error(f"Error sending update to WebSocket: {e}")
                 break  # Exit on WebSocket send failure
