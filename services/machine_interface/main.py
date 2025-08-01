@@ -534,7 +534,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
 
     # --- 2) Prepare previous‐status snapshot & seen‐sets ---
     prev = {name: {"status_1": 0, "status_2": 0} for name in stations}
-    seen = {s["set_id"] for s in active_sets}
+    
 
     while True:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
