@@ -19,6 +19,7 @@ USE_SIMULATOR = os.getenv("USE_SIMULATOR", "false").lower() in ("1", "true", "ye
 active_sets: list = []
 pending_load = { 'bcA': None, 'bcB': None }
 MAX_REG_COUNT = 125
+seen = set()
 
 # Simple guard to only spawn one new set per rising edge of the two global flags
 _load_seen = False
@@ -502,7 +503,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
       4) Publishes per‐set and full updates via Kafka
       5) Retires sets when unload station fires
     """
-    global active_sets, pending_load, aio_producer
+    global active_sets, pending_load, aio_producer,seen
 
     PROCESS_STATIONS = [
         "loading_station", "xbot_1", "vision_1", "gantry_1",
