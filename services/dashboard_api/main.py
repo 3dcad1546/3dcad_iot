@@ -1177,44 +1177,58 @@ async def consume_machine_status_and_populate_db():
 
 
 @app.websocket("/ws/machine-status")
-async def machine_status_ws(websocket: WebSocket):
-    await websocket.accept()
-    mgr.connect("machine-status", websocket)
+async def websocket_machine_status(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time machine status updates.
+    Sends initial full state and continues with incremental updates.
+    """
+    logger.info("WebSocket connection attempt to /ws/machine-status")
+    await mgr.connect("machine-status", websocket)
+    logger.info("WebSocket connected to machine-status")
 
-    # --- Send the latest full snapshot ---
     consumer = AIOKafkaConsumer(
         MACHINE_STATUS_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP,
-        group_id=f"ws-full-{uuid.uuid4()}",
         auto_offset_reset="latest",
-        value_deserializer=lambda b: b.decode("utf-8")
+        group_id=f"ws-{uuid.uuid4()}",
+        value_deserializer=lambda b: json.loads(b.decode()),
     )
-    await consumer.start()
+
     try:
-        await consumer.subscribe([MACHINE_STATUS_TOPIC])
-        # give the consumer a moment to get its partition assignment
-        await asyncio.sleep(1)
+        await consumer.start()
 
-        parts = consumer.assignment()
-        if parts:
-            ends = await consumer.end_offsets(parts)
-            for tp in parts:
-                eof = ends.get(tp, 0)
-                if eof > 0:
-                    await consumer.seek(tp, eof - 1)
+        # === Initial state (one-time full message with "sets") ===
+        try:
+            start_time = time.time()
+            async for msg in consumer:
+                if msg.value and "sets" in msg.value:
+                    await websocket.send_json(msg.value)
+                    logger.info("Sent initial machine status to client")
+                    break
+                if time.time() - start_time > 2:
+                    logger.warning("Timeout waiting for initial machine status")
+                    break
+        except Exception as e:
+            logger.error(f"Error fetching initial machine status: {e}")
 
-        # fetch and send the last message
-        msg = await consumer.getone()
-        await websocket.send_text(msg.value)
+        # === Continuous updates ===
+        async for msg in consumer:
+            try:
+                await websocket.send_json(msg.value)
+            except Exception as e:
+                logger.error(f"Error sending update to WebSocket: {e}")
+                break  # Exit on WebSocket send failure
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected from machine-status")
+    except Exception as e:
+        logger.error(f"Unexpected WebSocket error: {e}")
+        if hasattr(websocket, 'client_state') and websocket.client_state.state != 4:
+            await websocket.close(code=1011, reason=f"Error: {str(e)}")
     finally:
         await consumer.stop()
-
-    # --- Keep-alive & disconnect handling ---
-    try:
-        while True:
-            await websocket.receive_text()  # detect disconnects
-    except WebSocketDisconnect:
         mgr.disconnect("machine-status", websocket)
+
 
 @app.websocket("/ws/plc-write")
 async def ws_plc_write(ws: WebSocket):
