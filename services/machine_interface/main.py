@@ -580,17 +580,17 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
                 bc1 = decode_string(slice_)
                 await client.write_register(addr1, 0)
-                if bc1:
-                    logging.info(f"[{now}] {st} Specific barcode_1 decoded: {bc1}")
-                    logging.info(f"[{now}] Specific Station: {st}, status_1: {v1}, edge1: {edge1}")
+                # if bc1:
+                #     logging.info(f"[{now}] {st} Specific barcode_1 decoded: {bc1}")
+                #     logging.info(f"[{now}] Specific Station: {st}, status_1: {v1}, edge1: {edge1}")
             if edge2 and spec.get("barcode_block_2"):
                 start, cnt = spec["barcode_block_2"]
                 slice_ = regs_bc[(start - min_bc):(start - min_bc + cnt)]
                 bc2 = decode_string(slice_)
                 await client.write_register(addr2, 0)
-                if bc2:
-                    logging.info(f"[{now}] {st} Specific barcode_2 decoded: {bc2}")
-                    logging.info(f"[{now}] Specific Station: {st}, status_2: {v2}, edge2: {edge2}")
+                # if bc2:
+                #     logging.info(f"[{now}] {st} Specific barcode_2 decoded: {bc2}")
+                #     logging.info(f"[{now}] Specific Station: {st}, status_2: {v2}, edge2: {edge2}")
 
             # clear PLC bits only when edges fired
             # if edge1:
@@ -693,13 +693,13 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                     await client.write_register(addr, val & ~(1 << bit))
             active_sets[:] = [s for s in active_sets if s["set_id"] not in completed]
             seen -= set(completed)
-            # force a full update on retire
-            logging.info({"type":"completed_update","msg":"Specific","sets":active_sets,"ts":now})
-            if aio_producer:
-                await aio_producer.send_and_wait(
-                    KAFKA_TOPIC_MACHINE_STATUS,
-                    value={"type": "completed_update", "sets": active_sets, "ts": now}
-                )
+            # # force a full update on retire
+            # logging.info({"type":"completed_update","msg":"Specific","sets":active_sets,"ts":now})
+            # if aio_producer:
+            #     await aio_producer.send_and_wait(
+            #         KAFKA_TOPIC_MACHINE_STATUS,
+            #         value={"type": "completed_update", "sets": active_sets, "ts": now}
+            #     )
 
         # 10 Hz pacing
         await asyncio.sleep(0.01)
