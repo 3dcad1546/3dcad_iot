@@ -655,21 +655,21 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
         # D) PUBLISH UPDATES if anything changed
         if any_update and aio_producer:
             # per‐set updates
-            for s in active_sets:
-                logging.info({"type":"set_update","log":"Specific","set_id":s["set_id"],"current_station":s["current_station"],"ts":now})
-                await aio_producer.send(
-                    sanitize_topic_name(f"{KAFKA_TOPIC_MACHINE_STATUS}.set", s["set_id"]),
-                    value={"type": "set_update", "set": s, "ts": now}
-                )
-                await aio_producer.send(
-                    KAFKA_TOPIC_MACHINE_STATUS,
-                    value={
-                        "type": "set_update",
-                        "set_id": s["set_id"],
-                        "current_station": s["current_station"],
-                        "ts": now
-                    }
-                )
+            # for s in active_sets:
+            #     logging.info({"type":"set_update","log":"Specific","set_id":s["set_id"],"current_station":s["current_station"],"ts":now})
+            #     await aio_producer.send(
+            #         sanitize_topic_name(f"{KAFKA_TOPIC_MACHINE_STATUS}.set", s["set_id"]),
+            #         value={"type": "set_update", "set": s, "ts": now}
+            #     )
+            #     await aio_producer.send(
+            #         KAFKA_TOPIC_MACHINE_STATUS,
+            #         value={
+            #             "type": "set_update",
+            #             "set_id": s["set_id"],
+            #             "current_station": s["current_station"],
+            #             "ts": now
+            #         }
+            #     )
                 #full list
             logging.info({"type":"full_update","msg":"Specific","sets":active_sets,"ts":now})
             await aio_producer.send_and_wait(
@@ -694,11 +694,11 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             active_sets[:] = [s for s in active_sets if s["set_id"] not in completed]
             seen -= set(completed)
             # force a full update on retire
-            logging.info({"type":"full_update","msg":"Specific","sets":active_sets,"ts":now})
+            logging.info({"type":"completed_update","msg":"Specific","sets":active_sets,"ts":now})
             if aio_producer:
                 await aio_producer.send_and_wait(
                     KAFKA_TOPIC_MACHINE_STATUS,
-                    value={"type": "full_update", "sets": active_sets, "ts": now}
+                    value={"type": "completed_update", "sets": active_sets, "ts": now}
                 )
 
         # 10 Hz pacing
