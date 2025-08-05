@@ -506,8 +506,8 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
     global active_sets, pending_load, aio_producer,seen
 
     PROCESS_STATIONS = [
-        "loading_station", "xbot_1", "vision_1", "gantry_1",
-        "xbot_2", "vision_2", "gantry_2", "vision_3", "unload_station"
+        "loading_station", "vision_1", "gantry_1", "xbot_1","vision_2",
+         "gantry_2", "xbot_2","vision_3", "unload_station"
     ]
     stations = REGISTER_MAP.get("stations", {})
 
@@ -547,7 +547,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 regs_stat.extend(rr.registers)
             else:
                 regs_stat.extend([0]*cnt)
-            await asyncio.sleep(0.005)
+            #await asyncio.sleep(0.005)
         # logging.info(f"[{now}] Specific Status registers: {regs_stat}")
         # B) Chunked bulk‐read barcodes
         regs_bc = []
@@ -557,7 +557,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
                 regs_bc.extend(rr.registers)
             else:
                 regs_bc.extend([0]*cnt)
-            await asyncio.sleep(0.005)
+            #await asyncio.sleep(0.005)
         # logging.info(f"[{now}] Specific Barcode registers: {regs_bc}") 
 
         # C) Per‐station edge detect + decode
@@ -702,7 +702,7 @@ async def read_specific_plc_data(client: AsyncModbusTcpClient):
             #     )
 
         # 10 Hz pacing
-        await asyncio.sleep(0.01)
+        # await asyncio.sleep(0.005)
 
 
 async def read_and_publish_per_section_loop(client: AsyncModbusTcpClient, interval_seconds=0.5):

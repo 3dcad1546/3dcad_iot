@@ -44,9 +44,9 @@ async def main():
                 else:
                     print(f"{name:20s} | status_1: reg={reg1}, bit={bit1} → {v1}")
 
-                previous_status[name] = v1
+                # previous_status[name] = v1
 
-            await asyncio.sleep(0.5)  # Poll every 50ms (adjust as needed)
+            await asyncio.sleep(0.005)#Poll every 50ms (adjust as needed)
     finally:
         await client.close()
 

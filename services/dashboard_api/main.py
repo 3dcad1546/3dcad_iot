@@ -1051,7 +1051,7 @@ async def consume_machine_status_and_populate_db():
                 group_id="machine_status_db_processor"
             )
             await consumer.start()
-            logger.info("Started machine status consumer for database processing")
+            logger.info("Saving Started machine status consumer for database processing")
             break
         except AIOKafkaNoBrokersAvailable:
             await asyncio.sleep(0.5)
@@ -1061,9 +1061,12 @@ async def consume_machine_status_and_populate_db():
     try:
         async for msg in consumer:
             payload = msg.value
+            logger.info(f"Saving Received payload: {payload}")
+
             
             # Process machine status for cycle management
             if "sets" in payload:
+                logger.info(f"Saving Processing {len(payload['sets'])} sets from payload")
                 for set_data in payload["sets"]:
                     # Only process completed sets
                     unload_status = set_data.get("progress", {}).get("unload_station", {}).get("status_1", 0)
@@ -1079,6 +1082,7 @@ async def consume_machine_status_and_populate_db():
                         
                         # Generate deterministic UUID for cycle_id
                         cycle_id = str(uuid.uuid5(uuid.NAMESPACE_OID, original_set_id))
+                        logger.info(f"Saving Generated cycle_id: {cycle_id} from set_id: {original_set_id}")
                         
                         # Process barcodes
                         barcodes = set_data.get("barcodes", [])
@@ -1093,6 +1097,8 @@ async def consume_machine_status_and_populate_db():
                                 if "\r" in primary_barcode:
                                     primary_barcode = primary_barcode.split("\r")[0]
                         
+                                    logger.info(f"Saving Processed barcode: {primary_barcode}")
+                        
                         # Insert cycle if not exists
                         try:
                             cur.execute("""
@@ -1102,12 +1108,16 @@ async def consume_machine_status_and_populate_db():
                             """, (cycle_id, primary_barcode, "system", 1, "default", set_data.get("created_ts")))
                             
                             if cur.rowcount > 0:
-                                logger.info(f"New cycle created: {cycle_id} with barcode: {primary_barcode}")
+                                logger.info(f"Saving and inserted New cycle created into db: {cycle_id} with barcode: {primary_barcode}")
+                            
+                            else:
+                                logger.info(f"Saving Cycle already exists: {cycle_id}, skipping insert")
                                 
                         except Exception as e:
                             logger.error(f"Error inserting cycle {cycle_id}: {e}")
                             
             conn.commit()
+            logger.info("DB transaction committed")
             
     except Exception as e:
         logger.error(f"Error in machine status consumer: {e}")
