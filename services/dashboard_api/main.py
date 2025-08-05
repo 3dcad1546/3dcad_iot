@@ -680,7 +680,7 @@ def get_cycles(
     barcode: Optional[str] = None,
     from_ts: Optional[datetime] = Query(None, alias="from"),
     to_ts: Optional[datetime] = Query(None, alias="to"),
-    limit: int = Query(400, ge=1, le=500),
+    limit: int = Query(700, ge=1, le=800),
     user: str = Depends(require_login)
 ):
     IST = timezone("Asia/Kolkata")
@@ -1037,9 +1037,100 @@ async def consume_set_updates():
         logger.info("Stopped set updates consumer")
 
 # Also add the missing consume_machine_status_and_populate_db function
+# async def consume_machine_status_and_populate_db():
+#     """
+#     Consume machine status from Kafka and process cycle data for database
+#     """
+#     for i in range(10):
+#         try:
+#             consumer = AIOKafkaConsumer(
+#                 MACHINE_STATUS_TOPIC,
+#                 bootstrap_servers=KAFKA_BOOTSTRAP,
+#                 auto_offset_reset="earliest",
+#                 value_deserializer=lambda b: json.loads(b.decode()),
+#                 group_id="machine_status_db_processor"
+#             )
+#             await consumer.start()
+#             logger.info("Saving Started machine status consumer for database processing")
+#             break
+#         except AIOKafkaNoBrokersAvailable:
+#             await asyncio.sleep(0.5)
+#     else:
+#         raise RuntimeError("Cannot connect machine status consumer")
+
+#     try:
+#         async for msg in consumer:
+#             payload = msg.value
+#             logger.info(f"Saving Received payload: {payload}")
+
+            
+#             # Process machine status for cycle management
+#             if "sets" in payload:
+#                 logger.info(f"Saving Processing {len(payload['sets'])} sets from payload")
+#                 for set_data in payload["sets"]:
+#                     # Only process completed sets
+#                     unload_status = set_data.get("progress", {}).get("unload_station", {}).get("status_1", 0)
+#                     if unload_status != 1:
+#                         continue  # Skip incomplete sets
+#                     # Extract and clean the set_id and barcodes
+#                     original_set_id = set_data.get("set_id", "")
+#                     if original_set_id:
+#                         # # Remove null bytes and + with any digits after it
+#                         # original_set_id = original_set_id.replace("\x00", "")
+#                         # if "+" in original_set_id:
+#                         #     original_set_id = original_set_id.split("+")[0]
+                        
+#                         # Generate deterministic UUID for cycle_id
+#                         cycle_id = str(uuid.uuid5(uuid.NAMESPACE_OID, original_set_id))
+#                         logger.info(f"Saving Generated cycle_id: {cycle_id} from set_id: {original_set_id}")
+                        
+#                         # Process barcodes
+#                         barcodes = set_data.get("barcodes", [])
+#                         primary_barcode = ""
+#                         if barcodes:
+#                             primary_barcode = str(barcodes[0]) if barcodes[0] else ""
+#                             # Clean barcode
+#                             if primary_barcode:
+#                                 primary_barcode = primary_barcode.replace("\x00", "")
+#                                 if "_" in primary_barcode:
+#                                     primary_barcode = primary_barcode.replace("_", "+")
+#                                 if "\r" in primary_barcode:
+#                                     primary_barcode = primary_barcode.split("\r")[0]
+                        
+#                                     logger.info(f"Saving Processed barcode: {primary_barcode}")
+                        
+#                         # Insert cycle if not exists
+#                         try:
+#                             cur.execute("""
+#                                 INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts)
+#                                 VALUES (%s, %s, %s, %s, %s, %s)
+#                                 ON CONFLICT (cycle_id) DO NOTHING
+#                             """, (cycle_id, primary_barcode, "system", 1, "default", set_data.get("created_ts")))
+                            
+#                             if cur.rowcount > 0:
+#                                 logger.info(f"Saving and inserted New cycle created into db: {cycle_id} with barcode: {primary_barcode}")
+                            
+#                             else:
+#                                 logger.info(f"Saving Cycle already exists: {cycle_id}, skipping insert")
+                                
+#                         except Exception as e:
+#                             logger.error(f"Error inserting cycle {cycle_id}: {e}")
+                            
+#             conn.commit()
+#             logger.info("DB transaction committed")
+            
+#     except Exception as e:
+#         logger.error(f"Error in machine status consumer: {e}")
+#     finally:
+#         await consumer.stop()
+#         logger.info("Stopped machine status consumer")
+
+
+# modified kafka function for saving
 async def consume_machine_status_and_populate_db():
     """
-    Consume machine status from Kafka and process cycle data for database
+    Consume machine status from Kafka and process cycle data for database.
+    Inserts one row per barcode (even duplicates) with a unique cycle_id each time.
     """
     for i in range(10):
         try:
@@ -1054,76 +1145,78 @@ async def consume_machine_status_and_populate_db():
             logger.info("Saving Started machine status consumer for database processing")
             break
         except AIOKafkaNoBrokersAvailable:
+            logger.warning(f"Saving Kafka broker not available. Retry {i + 1}/10...")
             await asyncio.sleep(0.5)
     else:
-        raise RuntimeError("Cannot connect machine status consumer")
+        raise RuntimeError("Saving Cannot connect machine status consumer")
 
     try:
         async for msg in consumer:
             payload = msg.value
-            logger.info(f"Saving Received payload: {payload}")
+            logger.debug(f"Saving Received payload: {payload}")
 
-            
-            # Process machine status for cycle management
             if "sets" in payload:
-                logger.info(f"Saving Processing {len(payload['sets'])} sets from payload")
                 for set_data in payload["sets"]:
-                    # Only process completed sets
                     unload_status = set_data.get("progress", {}).get("unload_station", {}).get("status_1", 0)
                     if unload_status != 1:
-                        continue  # Skip incomplete sets
-                    # Extract and clean the set_id and barcodes
+                        logger.debug("Saving Skipping incomplete set")
+                        continue
+
                     original_set_id = set_data.get("set_id", "")
-                    if original_set_id:
-                        # # Remove null bytes and + with any digits after it
-                        # original_set_id = original_set_id.replace("\x00", "")
-                        # if "+" in original_set_id:
-                        #     original_set_id = original_set_id.split("+")[0]
-                        
-                        # Generate deterministic UUID for cycle_id
-                        cycle_id = str(uuid.uuid5(uuid.NAMESPACE_OID, original_set_id))
-                        logger.info(f"Saving Generated cycle_id: {cycle_id} from set_id: {original_set_id}")
-                        
-                        # Process barcodes
-                        barcodes = set_data.get("barcodes", [])
-                        primary_barcode = ""
-                        if barcodes:
-                            primary_barcode = str(barcodes[0]) if barcodes[0] else ""
-                            # Clean barcode
-                            if primary_barcode:
-                                primary_barcode = primary_barcode.replace("\x00", "")
-                                if "_" in primary_barcode:
-                                    primary_barcode = primary_barcode.replace("_", "+")
-                                if "\r" in primary_barcode:
-                                    primary_barcode = primary_barcode.split("\r")[0]
-                        
-                                    logger.info(f"Saving Processed barcode: {primary_barcode}")
-                        
-                        # Insert cycle if not exists
+                    created_ts = set_data.get("created_ts")
+                    barcodes = set_data.get("barcodes", [])
+
+                    if not barcodes:
+                        logger.warning(f"Saving No barcodes found for set_id: {original_set_id}")
+                        continue
+
+                    for barcode in barcodes:
+                        if not barcode:
+                            continue
+
+                        # Clean barcode
+                        cleaned_barcode = barcode.replace("\x00", "")
+                        if "_" in cleaned_barcode:
+                            cleaned_barcode = cleaned_barcode.replace("_", "+")
+                        if "\r" in cleaned_barcode:
+                            cleaned_barcode = cleaned_barcode.split("\r")[0]
+
+                        # Generate a truly unique cycle_id
+                        cycle_id = str(uuid.uuid4())
+
+
+
+                        ist = ZoneInfo("Asia/Kolkata")
                         try:
+                            
+                            # Convert start_ts from payload to IST
+                            created_ts_raw = set_data.get("created_ts")
+                            start_ts_ist = datetime.fromisoformat(created_ts_raw).astimezone(ist) if created_ts_raw else None
+                            logger.info(f"Saving start_ts_ist time: {start_ts_ist} ")
+
+                            # Generate end_ts as current time in IST
+                            end_ts_ist = datetime.now(tz=ist)
+                            logger.info(f"Saving end_ts_ist time: {end_ts_ist} ")
+
                             cur.execute("""
-                                INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts)
-                                VALUES (%s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (cycle_id) DO NOTHING
-                            """, (cycle_id, primary_barcode, "system", 1, "default", set_data.get("created_ts")))
-                            
-                            if cur.rowcount > 0:
-                                logger.info(f"Saving and inserted New cycle created into db: {cycle_id} with barcode: {primary_barcode}")
-                            
-                            else:
-                                logger.info(f"Saving Cycle already exists: {cycle_id}, skipping insert")
-                                
+                                INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts, end_ts)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """, (cycle_id, cleaned_barcode, "system", 1, "default", start_ts_ist, end_ts_ist))
+
+                            logger.info(f"Saving Inserted new cycle: {cycle_id} | Barcode: {cleaned_barcode}")
+
                         except Exception as e:
-                            logger.error(f"Error inserting cycle {cycle_id}: {e}")
-                            
-            conn.commit()
-            logger.info("DB transaction committed")
-            
+                            logger.error(f"Saving Error inserting cycle for barcode {cleaned_barcode}: {e}")
+
+                conn.commit()
+                logger.debug("Saving Committed DB transaction")
+
     except Exception as e:
         logger.error(f"Error in machine status consumer: {e}")
+
     finally:
         await consumer.stop()
-        logger.info("Stopped machine status consumer")
+        logger.info("Stopped machine status consumer")  
 
 
 
