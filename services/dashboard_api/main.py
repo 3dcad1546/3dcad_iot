@@ -1194,14 +1194,18 @@ async def consume_machine_status_and_populate_db():
                             start_ts_ist = datetime.fromisoformat(created_ts_raw).astimezone(ist) if created_ts_raw else None
                             logger.info(f"Saving start_ts_ist time: {start_ts_ist} ")
 
-                            # Generate end_ts as current time in IST
-                            end_ts_ist = datetime.now(tz=ist)
+                            # Generate end_ts as current time in IST also removed microseconds.
+                            end_ts_ist = datetime.now(tz=ist).replace(microsecond=0)
                             logger.info(f"Saving end_ts_ist time: {end_ts_ist} ")
 
+                            # Calculate time difference in seconds
+                            difference_seconds = int((end_ts_ist - start_ts_ist).total_seconds()) if start_ts_ist else None
+                            logger.info(f"Saving difference_seconds time: {difference_seconds} ")
+
                             cur.execute("""
-                                INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts, end_ts)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            """, (cycle_id, cleaned_barcode, "system", 1, "default", start_ts_ist, end_ts_ist))
+                                INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts, end_ts, difference)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (cycle_id, cleaned_barcode, "system", 1, "default", start_ts_ist, end_ts_ist, difference_seconds))
 
                             logger.info(f"Saving Inserted new cycle: {cycle_id} | Barcode: {cleaned_barcode}")
 

@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS cycle_master (
   shift_id      INTEGER     NOT NULL REFERENCES shift_master(id),
   start_ts      TIMESTAMP   NOT NULL DEFAULT NOW(),
   end_ts        TIMESTAMP,
+  difference    INTEGER,
   unload_status BOOLEAN     NOT NULL DEFAULT FALSE,
   unload_ts     TIMESTAMP
 );
