@@ -610,12 +610,31 @@ async def receive_analytics(data: Dict, x_auth_token: str = Header(default=None,
         
         # logger.info(f"Found cycle_id {cycle_id} for barcode {barcode}")
 
-        
-        
+        # Get current shift from shift_master table
+        cur.execute("""
+                SELECT id
+                FROM shift_master
+                WHERE
+                    (
+                        start_time < end_time
+                        AND CURRENT_TIME BETWEEN start_time AND end_time
+                    )
+                    OR
+                    (
+                        start_time > end_time
+                        AND (
+                            CURRENT_TIME >= start_time OR CURRENT_TIME < end_time
+                        )
+                    )
+                LIMIT 1
+            """)
+        row = cur.fetchone()
+        shift_id = row["id"] if row else 1  # Default to shift 1 if none found
+                
         # Store the analytics data
         cur.execute(
             "INSERT INTO cycle_analytics(json_data, operator, shift_id, variant, barcode) VALUES(%s, %s, %s, %s, %s) RETURNING id",
-            (json.dumps(data), username, 1, "default", barcode)
+            (json.dumps(data), username, shift_id, "default", barcode)
         )
        
         analytics_id = cur.fetchone()["id"]
@@ -1130,104 +1149,10 @@ async def consume_set_updates():
 
 
 # # modified kafka function for saving
-# async def consume_machine_status_and_populate_db():
-#     """
-#     Consume machine status from Kafka and process cycle data for database.
-#     Inserts one row per barcode (even duplicates) with a unique cycle_id each time.
-#     """
-#     for i in range(10):
-#         try:
-#             consumer = AIOKafkaConsumer(
-#                 MACHINE_STATUS_TOPIC,
-#                 bootstrap_servers=KAFKA_BOOTSTRAP,
-#                 auto_offset_reset="earliest",
-#                 value_deserializer=lambda b: json.loads(b.decode()),
-#                 group_id="machine_status_db_processor"
-#             )
-#             await consumer.start()
-#             logger.info("Saving Started machine status consumer for database processing")
-#             break
-#         except AIOKafkaNoBrokersAvailable:
-#             logger.warning(f"Saving Kafka broker not available. Retry {i + 1}/10...")
-#             await asyncio.sleep(0.5)
-#     else:
-#         raise RuntimeError("Saving Cannot connect machine status consumer")
-
-#     try:
-#         async for msg in consumer:
-#             payload = msg.value
-#             logger.debug(f"Saving Received payload: {payload}")
-
-#             if "sets" in payload:
-#                 for set_data in payload["sets"]:
-#                     unload_status = set_data.get("progress", {}).get("unload_station", {}).get("status_1", 0)
-#                     if unload_status != 1:
-#                         logger.debug("Saving Skipping incomplete set")
-#                         continue
-
-#                     original_set_id = set_data.get("set_id", "")
-#                     created_ts = set_data.get("created_ts")
-#                     barcodes = set_data.get("barcodes", [])
-
-#                     if not barcodes:
-#                         logger.warning(f"Saving No barcodes found for set_id: {original_set_id}")
-#                         continue
-
-#                     for barcode in barcodes:
-#                         if not barcode:
-#                             continue
-
-#                         # Clean barcode
-#                         cleaned_barcode = barcode.replace("\x00", "")
-#                         if "_" in cleaned_barcode:
-#                             cleaned_barcode = cleaned_barcode.replace("_", "+")
-#                         if "\r" in cleaned_barcode:
-#                             cleaned_barcode = cleaned_barcode.split("\r")[0]
-
-#                         # Generate a truly unique cycle_id
-#                         cycle_id = str(uuid.uuid4())
-
-
-
-#                         ist = ZoneInfo("Asia/Kolkata")
-#                         try:
-                            
-#                             # Convert start_ts from payload to IST
-#                             created_ts_raw = set_data.get("created_ts")
-#                             start_ts_ist = datetime.fromisoformat(created_ts_raw).astimezone(ist) if created_ts_raw else None
-#                             logger.info(f"Saving start_ts_ist time: {start_ts_ist} ")
-
-#                             # Generate end_ts as current time in IST also removed microseconds.
-#                             end_ts_ist = datetime.now(tz=ist).replace(microsecond=0)
-#                             logger.info(f"Saving end_ts_ist time: {end_ts_ist} ")
-
-#                             # Calculate time difference in seconds
-#                             difference_seconds = int((end_ts_ist - start_ts_ist).total_seconds()) if start_ts_ist else None
-#                             logger.info(f"Saving difference_seconds time: {difference_seconds} ")
-
-#                             cur.execute("""
-#                                 INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts, end_ts, difference)
-#                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-#                             """, (cycle_id, cleaned_barcode, "system", 1, "default", start_ts_ist, end_ts_ist, difference_seconds))
-
-#                             logger.info(f"Saving Inserted new cycle: {cycle_id} | Barcode: {cleaned_barcode}")
-
-#                         except Exception as e:
-#                             logger.error(f"Saving Error inserting cycle for barcode {cleaned_barcode}: {e}")
-
-#                 conn.commit()
-#                 logger.debug("Saving Committed DB transaction")
-
-#     except Exception as e:
-#         logger.error(f"Error in machine status consumer: {e}")
-
-#     finally:
-#         await consumer.stop()
-#         logger.info("Stopped machine status consumer")  
-
 async def consume_machine_status_and_populate_db():
     """
-    Consume machine status from Kafka and process cycle data for database
+    Consume machine status from Kafka and process cycle data for database.
+    Inserts one row per barcode (even duplicates) with a unique cycle_id each time.
     """
     for i in range(10):
         try:
@@ -1239,90 +1164,184 @@ async def consume_machine_status_and_populate_db():
                 group_id="machine_status_db_processor"
             )
             await consumer.start()
-            logger.info("Started machine status consumer for database processing")
+            logger.info("Saving Started machine status consumer for database processing")
             break
         except AIOKafkaNoBrokersAvailable:
+            logger.warning(f"Saving Kafka broker not available. Retry {i + 1}/10...")
             await asyncio.sleep(0.5)
     else:
-        raise RuntimeError("Cannot connect machine status consumer")
+        raise RuntimeError("Saving Cannot connect machine status consumer")
 
     try:
         async for msg in consumer:
             payload = msg.value
-            
-            # Process machine status for cycle management
+            logger.debug(f"Saving Received payload: {payload}")
+
             if "sets" in payload:
                 for set_data in payload["sets"]:
-                    # Only process completed sets (those at unload station with status_1=1)
                     unload_status = set_data.get("progress", {}).get("unload_station", {}).get("status_1", 0)
-                    
-                    if unload_status == 1:
+                    if unload_status != 1:
+                        logger.debug("Saving Skipping incomplete set")
+                        continue
+
+                    original_set_id = set_data.get("set_id", "")
+                    created_ts = set_data.get("created_ts")
+                    barcodes = set_data.get("barcodes", [])
+
+                    if not barcodes:
+                        logger.warning(f"Saving No barcodes found for set_id: {original_set_id}")
+                        continue
+
+                    for barcode in barcodes:
+                        if not barcode:
+                            continue
+
+                        # Clean barcode
+                        cleaned_barcode = barcode.replace("\x00", "")
+                        if "_" in cleaned_barcode:
+                            cleaned_barcode = cleaned_barcode.replace("_", "+")
+                        if "\r" in cleaned_barcode:
+                            cleaned_barcode = cleaned_barcode.split("\r")[0]
+
+                        # Generate a truly unique cycle_id
+                        cycle_id = str(uuid.uuid4())
+
+
+
+                        ist = ZoneInfo("Asia/Kolkata")
                         try:
-                            set_id = set_data.get("set_id")
-                            barcodes = set_data.get("barcodes", [])
-                            barcode = barcodes[0] if barcodes else ""
-                            created_ts = set_data.get("created_ts")
-                            last_update = set_data.get("last_update")
                             
-                            # Check if this completed cycle already exists in the database
-                            cur.execute("SELECT cycle_id FROM cycle_master WHERE barcode = %s AND unload_status = TRUE", 
-                                       (barcode,))
-                            if cur.fetchone():
-                                logger.debug(f"Cycle for barcode {barcode} already in database, skipping")
-                                continue
-                                
-                            # Get current operator (if available) or use "system"
-                            operator = "system"
-                            
-                            # Get current shift from shift_master table
+                            # Convert start_ts from payload to IST
+                            created_ts_raw = set_data.get("created_ts")
+                            start_ts_ist = datetime.fromisoformat(created_ts_raw).astimezone(ist) if created_ts_raw else None
+                            logger.info(f"Saving start_ts_ist time: {start_ts_ist} ")
+
+                            # Generate end_ts as current time in IST also removed microseconds.
+                            end_ts_ist = datetime.now(tz=ist).replace(microsecond=0)
+                            logger.info(f"Saving end_ts_ist time: {end_ts_ist} ")
+
+                            # Calculate time difference in seconds
+                            difference_seconds = int((end_ts_ist - start_ts_ist).total_seconds()) if start_ts_ist else None
+                            logger.info(f"Saving difference_seconds time: {difference_seconds} ")
+
                             cur.execute("""
-                              SELECT id FROM shift_master
-                               WHERE (start_time < end_time AND start_time <= NOW()::time AND NOW()::time < end_time)
-                                  OR (start_time > end_time AND (NOW()::time >= start_time OR NOW()::time < end_time))
-                              LIMIT 1
-                            """)
-                            row = cur.fetchone()
-                            shift_id = row["id"] if row else 1  # Default to shift 1 if none found
-                            
-                            # Generate a unique cycle_id
-                            cycle_id = str(uuid.uuid4())
-                            
-                            # Insert the completed cycle
-                            cur.execute("""
-                                INSERT INTO cycle_master(
-                                    cycle_id, operator, shift_id, variant, barcode, 
-                                    start_ts, end_ts, unload_status, unload_ts
-                                ) VALUES (
-                                    %s, %s, %s, %s, %s, 
-                                    %s, %s, TRUE, %s
-                                )
-                            """, (
-                                cycle_id, operator, shift_id, "default", barcode,
-                                created_ts, last_update, last_update
-                            ))
-                            
-                            # Add progress stations as cycle events
-                            for station, details in set_data.get("progress", {}).items():
-                                if details.get("latched", False) and details.get("ts"):
-                                    cur.execute("""
-                                        INSERT INTO cycle_event(cycle_id, stage, ts)
-                                        VALUES (%s, %s, %s)
-                                    """, (cycle_id, station, details.get("ts")))
-                            
-                            logger.info(f"Added completed cycle {cycle_id} for barcode {barcode}")
-                            
+                                INSERT INTO cycle_master(cycle_id, barcode, operator, shift_id, variant, start_ts, end_ts, difference)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (cycle_id, cleaned_barcode, "system", 1, "default", start_ts_ist, end_ts_ist, difference_seconds))
+
+                            logger.info(f"Saving Inserted new cycle: {cycle_id} | Barcode: {cleaned_barcode}")
+
                         except Exception as e:
-                            logger.error(f"Error processing completed set {set_data.get('set_id')}: {e}")
-                            logger.error(traceback.format_exc())
-                            
-            conn.commit()
-            
+                            logger.error(f"Saving Error inserting cycle for barcode {cleaned_barcode}: {e}")
+
+                conn.commit()
+                logger.debug("Saving Committed DB transaction")
+
     except Exception as e:
         logger.error(f"Error in machine status consumer: {e}")
-        logger.error(traceback.format_exc())
+
     finally:
         await consumer.stop()
-        logger.info("Stopped machine status consumer")
+        logger.info("Stopped machine status consumer")  
+
+# async def consume_machine_status_and_populate_db():
+#     """
+#     Consume machine status from Kafka and process cycle data for database
+#     """
+#     for i in range(10):
+#         try:
+#             consumer = AIOKafkaConsumer(
+#                 MACHINE_STATUS_TOPIC,
+#                 bootstrap_servers=KAFKA_BOOTSTRAP,
+#                 auto_offset_reset="earliest",
+#                 value_deserializer=lambda b: json.loads(b.decode()),
+#                 group_id="machine_status_db_processor"
+#             )
+#             await consumer.start()
+#             logger.info("Started machine status consumer for database processing")
+#             break
+#         except AIOKafkaNoBrokersAvailable:
+#             await asyncio.sleep(0.5)
+#     else:
+#         raise RuntimeError("Cannot connect machine status consumer")
+
+#     try:
+#         async for msg in consumer:
+#             payload = msg.value
+            
+#             # Process machine status for cycle management
+#             if "sets" in payload:
+#                 for set_data in payload["sets"]:
+#                     # Only process completed sets (those at unload station with status_1=1)
+#                     unload_status = set_data.get("progress", {}).get("unload_station", {}).get("status_1", 0)
+                    
+#                     if unload_status == 1:
+#                         try:
+#                             set_id = set_data.get("set_id")
+#                             barcodes = set_data.get("barcodes", [])
+#                             barcode = barcodes[0] if barcodes else ""
+#                             created_ts = set_data.get("created_ts")
+#                             last_update = set_data.get("last_update")
+                            
+#                             # Check if this completed cycle already exists in the database
+#                             cur.execute("SELECT cycle_id FROM cycle_master WHERE barcode = %s AND unload_status = TRUE", 
+#                                        (barcode,))
+#                             if cur.fetchone():
+#                                 logger.debug(f"Cycle for barcode {barcode} already in database, skipping")
+#                                 continue
+                                
+#                             # Get current operator (if available) or use "system"
+#                             operator = "system"
+                            
+#                             # Get current shift from shift_master table
+#                             cur.execute("""
+#                               SELECT id FROM shift_master
+#                                WHERE (start_time < end_time AND start_time <= NOW()::time AND NOW()::time < end_time)
+#                                   OR (start_time > end_time AND (NOW()::time >= start_time OR NOW()::time < end_time))
+#                               LIMIT 1
+#                             """)
+#                             row = cur.fetchone()
+#                             shift_id = row["id"] if row else 1  # Default to shift 1 if none found
+                            
+#                             # Generate a unique cycle_id
+#                             cycle_id = str(uuid.uuid4())
+                            
+#                             # Insert the completed cycle
+#                             cur.execute("""
+#                                 INSERT INTO cycle_master(
+#                                     cycle_id, operator, shift_id, variant, barcode, 
+#                                     start_ts, end_ts, unload_status, unload_ts
+#                                 ) VALUES (
+#                                     %s, %s, %s, %s, %s, 
+#                                     %s, %s, TRUE, %s
+#                                 )
+#                             """, (
+#                                 cycle_id, operator, shift_id, "default", barcode,
+#                                 created_ts, last_update, last_update
+#                             ))
+                            
+#                             # Add progress stations as cycle events
+#                             for station, details in set_data.get("progress", {}).items():
+#                                 if details.get("latched", False) and details.get("ts"):
+#                                     cur.execute("""
+#                                         INSERT INTO cycle_event(cycle_id, stage, ts)
+#                                         VALUES (%s, %s, %s)
+#                                     """, (cycle_id, station, details.get("ts")))
+                            
+#                             logger.info(f"Added completed cycle {cycle_id} for barcode {barcode}")
+                            
+#                         except Exception as e:
+#                             logger.error(f"Error processing completed set {set_data.get('set_id')}: {e}")
+#                             logger.error(traceback.format_exc())
+                            
+#             conn.commit()
+            
+#     except Exception as e:
+#         logger.error(f"Error in machine status consumer: {e}")
+#         logger.error(traceback.format_exc())
+#     finally:
+#         await consumer.stop()
+#         logger.info("Stopped machine status consumer")
 
 # @app.websocket("/ws/machine-status")
 # async def websocket_machine_status(websocket: WebSocket):
