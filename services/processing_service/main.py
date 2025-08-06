@@ -39,6 +39,7 @@ CONSUMER_GROUP          = os.getenv("CONSUMER_GROUP", "processing_service")
 
 DB_URL                  = os.getenv("DB_URL")
 USER_LOGIN_URL          = os.getenv("USER_LOGIN_URL")
+MACHINE_STATUS_TOPIC = os.getenv("MACHINE_STATUS_TOPIC", "machine_status")
 
 
 
@@ -151,6 +152,89 @@ async def get_current_operator(token: str) -> str:
 
 def now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+async def plc_barcode_listener():
+    """
+    Listen for barcode scans from the PLC via the machine_status Kafka topic
+    """
+    logger.info(f"Starting PLC barcode listener on {MACHINE_STATUS_TOPIC}")
+    
+    consumer = AIOKafkaConsumer(
+        MACHINE_STATUS_TOPIC,
+        bootstrap_servers=KAFKA_BROKER,
+        value_deserializer=lambda b: json.loads(b.decode()),
+        group_id="plc_barcode_processor"
+    )
+    await consumer.start()
+
+    try:
+        async for msg in consumer:
+            payload = msg.value
+            if "sets" in payload:
+                for set_data in payload.get("sets", []):
+                    # Check if this is a new barcode at loading_station
+                    loading_station = set_data.get("progress", {}).get("loading_station", {})
+                    
+                    # Only process when status_1 is active and we have barcodes
+                    if loading_station.get("status_1") == 1 and set_data.get("barcodes"):
+                        # Get barcodes - typically will be two in a set
+                        barcodes = set_data.get("barcodes", [])
+                        
+                        # Process each barcode if available
+                        for barcode in barcodes:
+                            if not barcode:
+                                continue
+                                
+                            # Clean the barcode
+                            cleaned_barcode = barcode.replace("\x00", "")
+                            if "_" in cleaned_barcode:
+                                cleaned_barcode = cleaned_barcode.replace("_", "+")
+                            if "\r" in cleaned_barcode:
+                                cleaned_barcode = cleaned_barcode.split("\r")[0]
+                            
+                            # Create a trigger message from the barcode
+                            trigger_msg = {
+                                "barcode": cleaned_barcode, 
+                                "ts": payload.get("ts", now_iso()),
+                                "mode_auto": True  # Assume auto mode for PLC-detected barcodes
+                            }
+                            
+                            logger.info(f"Detected barcode from PLC: {cleaned_barcode}")
+                            
+                            # Process the event using existing business logic
+                            try:
+                                # Audit the input
+                                pg_cur.execute(
+                                    "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
+                                    (cleaned_barcode, "plc_barcode_detected", json.dumps(trigger_msg))
+                                )
+                                pg_conn.commit()
+                                
+                                # Process the barcode trigger
+                                out = await process_event(TRIGGER_TOPIC, trigger_msg)
+                                
+                                # Send any resulting commands to the PLC
+                                for cmd in out.get("commands", []):
+                                    await kafka_producer.send_and_wait(PLC_WRITE_TOPIC, cmd)
+                                    
+                                    # Audit the PLC command
+                                    pg_cur.execute(
+                                        "INSERT INTO mes_trace_history(serial,step,response_json) VALUES(%s,%s,%s)",
+                                        (cleaned_barcode, "machine_commands", json.dumps(cmd))
+                                    )
+                                    pg_conn.commit()
+                                    
+                            except Exception as e:
+                                logger.error(f"Error processing PLC barcode {cleaned_barcode}: {e}")
+                                import traceback
+                                logger.error(traceback.format_exc())
+                            
+    except Exception as e:
+        logger.error(f"Error in PLC barcode listener: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    finally:
+        await consumer.stop()
 
 async def publish_cycle_event(cycle_id: str, stage: str):
     evt = {"cycle_id": cycle_id, "stage": stage, "ts": now_iso()}
@@ -279,9 +363,14 @@ async def process_event(topic: str, msg: dict) -> dict:
 async def run():
     await init_kafka()
     logger.info("Running… Ctrl+C to quit")
+    
+    # Create the PLC barcode listener task
+    plc_listener_task = asyncio.create_task(plc_barcode_listener())
+    
     try:
+        # Run the main Kafka consumer loop
         async for msg in kafka_consumer:
-            topic   = msg.topic
+            topic = msg.topic
             payload = msg.value
             # audit input
             pg_cur.execute(
@@ -300,10 +389,16 @@ async def run():
                 pg_conn.commit()
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error in main consumer loop: {e}")
         import traceback
         logger.error(traceback.format_exc())
     finally:
+        # Cancel the PLC listener task
+        plc_listener_task.cancel()
+        try:
+            await plc_listener_task
+        except asyncio.CancelledError:
+            pass  # This is expected when cancelling
         await shutdown()
 
 if __name__ == '__main__':
