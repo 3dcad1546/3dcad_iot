@@ -225,7 +225,6 @@ class CycleReportItemAnalytics(BaseModel):
     variant: str
     barcode: str
     received_ts: datetime
-    difference: Optional[int]
     analytics: dict  # json_data stored here
 
 class Variant(BaseModel):
@@ -681,7 +680,7 @@ def get_cycles(
     barcode: Optional[str] = None,
     from_ts: Optional[datetime] = Query(None, alias="from"),
     to_ts: Optional[datetime] = Query(None, alias="to"),
-    limit: int = Query(700, ge=1, le=800),
+    limit: int = Query(1200, ge=1, le=1300),
     user: str = Depends(require_login)
 ):
     IST = timezone("Asia/Kolkata")
@@ -709,22 +708,18 @@ def get_cycles(
         params.append(to_ts_ist)
 
     sql = f"""
-            SELECT
-                ca.operator,
-                ca.shift_id,
-                ca.variant,
-                ca.barcode,
-                ca.received_ts,
-                ca.json_data AS analytics,
-                cm.difference
-            FROM cycle_analytics ca
-            LEFT JOIN cycle_master cm
-            ON ca.barcode = cm.barcode
-            WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
-            ORDER BY ca.received_ts DESC
-            LIMIT %s
-        """
-
+        SELECT
+            ca.operator,
+            ca.shift_id,
+            ca.variant,
+            ca.barcode,
+            ca.received_ts,
+            ca.json_data AS analytics
+        FROM cycle_analytics ca
+        WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
+        ORDER BY ca.received_ts DESC
+        LIMIT %s
+    """
     params.append(limit)
 
     cur.execute(sql, params)
@@ -738,7 +733,6 @@ def get_cycles(
             "variant": r["variant"] or "",
             "barcode": r["barcode"] or "",
             "analytics": r["analytics"] or {},
-            "difference": r["difference"],
             "received_ts": r["received_ts"].astimezone(IST) if r["received_ts"] else None,
         }
         result.append(CycleReportItemAnalytics(**item))
