@@ -56,4 +56,13 @@ edge-device-project/
 5. **Shut down:**
     `docker-compose down`
 
+### **Ops Wrapper**
+* It **waits for Postgres and Kafka health** (you have healthchecks defined) before declaring “up”.
 
+* ```seed-db``` re-applies ```init.sql``` inside the running edge_pg container and, if found, also applies ```services/postgres/seed_data.sql``` (you can drop that file in your repo).
+
+* backup writes to a ```backups/``` folder next to the script: ```edgedb_YYYYMMDD-HHMM.sql``` and a zipped Influx backup if the CLI is available in the container.
+
+* Autostart uses a Scheduled Task that runs: ```pwsh.exe -File <path>\edgectl.ps1 up ``` at boot with highest privileges.
+
+* You can also use the ```.bat``` wrapper to avoid execution policy prompts (double-click or call from ```cmd.exe```).
